@@ -77,14 +77,21 @@ class AgentWorker(threading.Thread):
 
     async def _ensure_connected(self) -> bool:
         if not await self.browser_engine.is_connection_alive():
-            self.status_cb("Connecting...", "Menghubungkan ke browser via CDP...")
+            self.status_cb("Connecting...", "Memeriksa & menghubungkan ke browser CDP...")
             try:
                 cdp_url = self.config.get("browser_cdp_url", "http://localhost:9222")
                 await self.browser_engine.connect_cdp(cdp_url)
                 self.status_cb("Connected", "Terhubung ke browser kuis.")
                 return True
             except Exception as e:
-                self.status_cb("Error", f"Gagal CDP: {e}")
+                err_str = str(e)
+                if "CDP Refused" in err_str:
+                    diag = "CDP Refused: Tutup semua jendela Chrome lalu klik Attach kembali."
+                elif "Timeout" in err_str:
+                    diag = "CDP Timeout: Browser sibuk atau terblokir."
+                else:
+                    diag = f"Gagal CDP: {err_str[:40]}"
+                self.status_cb("Error", diag)
                 return False
         return True
 

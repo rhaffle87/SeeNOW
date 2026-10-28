@@ -1,5 +1,7 @@
 # gui/components.py
+import tkinter as tk
 import customtkinter as ctk
+from typing import Optional, Any
 
 class StatusBadge(ctk.CTkFrame):
     def __init__(self, master, **kwargs):
@@ -98,3 +100,90 @@ class AnswerCard(ctk.CTkFrame):
 
         self.txt_reasoning.delete("1.0", "end")
         self.txt_reasoning.insert("1.0", reasoning or "Belum ada analisis.")
+
+class ToolTip:
+    def __init__(self, widget: Any, text: str, delay_ms: int = 500):
+        self.widget = widget
+        self.text = text
+        self.delay_ms = delay_ms
+        self.tip_window: Optional[tk.Toplevel] = None
+        self._after_id: Optional[str] = None
+
+        try:
+            self.widget.bind("<Enter>", self._on_enter, add="+")
+            self.widget.bind("<Leave>", self._on_leave, add="+")
+            self.widget.bind("<ButtonPress>", self._on_leave, add="+")
+        except Exception:
+            pass
+
+    def _on_enter(self, event: Any = None):
+        self._schedule()
+
+    def _on_leave(self, event: Any = None):
+        self._unschedule()
+        self._hide()
+
+    def _schedule(self):
+        self._unschedule()
+        try:
+            self._after_id = self.widget.after(self.delay_ms, self._show)
+        except Exception:
+            self._after_id = None
+
+    def _unschedule(self):
+        if self._after_id:
+            try:
+                self.widget.after_cancel(self._after_id)
+            except Exception:
+                pass
+            self._after_id = None
+
+    def _show(self):
+        if self.tip_window or not self.text:
+            return
+
+        try:
+            x = self.widget.winfo_rootx() + 8
+            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+        except Exception:
+            return
+
+        try:
+            self.tip_window = tw = tk.Toplevel(self.widget)
+            tw.wm_overrideredirect(True)
+            tw.attributes("-topmost", True)
+            tw.geometry(f"+{x}+{y}")
+
+            frame = ctk.CTkFrame(
+                tw,
+                fg_color="#18181b",
+                border_width=1,
+                border_color="#27272a",
+                corner_radius=6
+            )
+            frame.pack(fill="both", expand=True)
+
+            lbl = ctk.CTkLabel(
+                frame,
+                text=self.text,
+                font=ctk.CTkFont(size=10),
+                text_color="#e4e4e7",
+                wraplength=260,
+                justify="left",
+                padx=8,
+                pady=4
+            )
+            lbl.pack()
+        except Exception:
+            self._hide()
+
+    def _hide(self):
+        if self.tip_window:
+            try:
+                self.tip_window.destroy()
+            except Exception:
+                pass
+            self.tip_window = None
+
+def add_tooltip(widget: Any, text: str, delay_ms: int = 500) -> ToolTip:
+    return ToolTip(widget, text, delay_ms)

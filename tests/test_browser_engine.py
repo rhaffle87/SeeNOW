@@ -98,3 +98,22 @@ def test_auto_focus_exam_tab_selects_exam_content():
         exam_page.bring_to_front.assert_called_once()
 
     asyncio.run(run())
+
+def test_parse_host_port():
+    from core.browser_engine import parse_host_port
+    h1, p1 = parse_host_port("http://localhost:9222")
+    assert h1 in ("localhost", "127.0.0.1")
+    assert p1 == 9222
+
+    h2, p2 = parse_host_port("http://127.0.0.1:9223")
+    assert h2 == "127.0.0.1"
+    assert p2 == 9223
+
+def test_ensure_browser_running_reuses_active_endpoint():
+    async def run():
+        engine = BrowserEngine()
+        with patch("core.browser_engine.is_cdp_endpoint_ready", return_value=True):
+            res = await engine.ensure_browser_running("http://localhost:9222")
+            assert "9222" in res
+
+    asyncio.run(run())

@@ -34,3 +34,23 @@ def test_answer_card_update():
         card.lbl_target.configure.assert_called_with(text="✔ OPTION ID: [2]", text_color="#34d399")
         card.txt_reasoning.delete.assert_called_with("1.0", "end")
         card.txt_reasoning.insert.assert_called_with("1.0", "Test reasoning")
+
+def test_tooltip_lifecycle():
+    from gui.components import add_tooltip
+
+    mock_widget = MagicMock()
+    mock_widget.after = MagicMock(return_value="timer_123")
+    mock_widget.after_cancel = MagicMock()
+
+    tip = add_tooltip(mock_widget, "Sample guidance text", delay_ms=500)
+    assert tip.text == "Sample guidance text"
+    assert tip.delay_ms == 500
+
+    # Simulate enter
+    tip._on_enter()
+    assert tip._after_id == "timer_123"
+
+    # Simulate leave
+    tip._on_leave()
+    mock_widget.after_cancel.assert_called_with("timer_123")
+    assert tip._after_id is None

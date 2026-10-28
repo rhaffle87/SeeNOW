@@ -8,6 +8,8 @@ import logging
 import hashlib
 import asyncio
 import subprocess
+import http.client
+from urllib.parse import urlparse
 from typing import Optional, List, Dict, Any, Tuple, Union
 from PIL import Image
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Frame
@@ -17,6 +19,38 @@ logger = logging.getLogger("SeeNOW.Browser")
 def resource_path(relative_path: str) -> str:
     base_path = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     return os.path.join(base_path, relative_path)
+
+def parse_host_port(cdp_url: str) -> Tuple[str, int]:
+    try:
+        parsed = urlparse(cdp_url)
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or 9222
+        return host, port
+    except Exception:
+        return "127.0.0.1", 9222
+
+def is_cdp_endpoint_ready(port: int, host: str = "127.0.0.1", timeout: float = 0.6) -> bool:
+    try:
+        conn = http.client.HTTPConnection(host, port, timeout=timeout)
+        conn.request("GET", "/json/version", headers={"User-Agent": "SeeNOW-CDP-Probe"})
+        resp = conn.getresponse()
+        status = resp.status
+        conn.close()
+        return status == 200
+    except Exception:
+        return False
+
+def cleanup_profile_locks(profile_dir: str):
+    if not os.path.isdir(profile_dir):
+        return
+    for lock in ("SingletonLock", "SingletonCookie", "SingletonSocket", "lockfile"):
+        p = os.path.join(profile_dir, lock)
+        if os.path.exists(p):
+            try:
+                os.remove(p)
+                logger.info(f"Berhasil membersihkan file lock profil lama: {lock}")
+            except Exception:
+                pass
 
 class BrowserEngine:
     def __init__(self, config_manager=None):
@@ -78,6 +112,7 @@ class BrowserEngine:
 
         profile_dir = os.path.join(base_dir, "chrome_profile")
         os.makedirs(profile_dir, exist_ok=True)
+        cleanup_profile_locks(profile_dir)
 
         cmd = [
             exe,
@@ -89,18 +124,71 @@ class BrowserEngine:
 
         try:
             self.chrome_process = subprocess.Popen(cmd)
-            time.sleep(1.2)
+            time.sleep(0.8)
             logger.info(f"Browser berhasil diluncurkan dengan port {cdp_port}")
             return True
         except Exception as e:
             logger.error(f"Gagal meluncurkan browser: {e}")
             return False
 
+    async def ensure_browser_running(self, cdp_url: str = "http://localhost:9222") -> str:
+        host, port = parse_host_port(cdp_url)
+
+        # 1. Cek apakah endpoint sudah siap di host:port
+        if is_cdp_endpoint_ready(port, host):
+            logger.info(f"Endpoint browser CDP aktif di {host}:{port}")
+            return f"http://{host}:{port}"
+
+        # 2. Coba luncurkan browser di port utama
+        logger.info(f"Port {port} belum merespons. Meluncurkan browser otomatis...")
+        if self.launch_debug_browser(cdp_port=port):
+            for _ in range(12):
+                await asyncio.sleep(0.25)
+                if is_cdp_endpoint_ready(port, host):
+                    logger.info(f"Browser siap di {host}:{port}")
+                    return f"http://{host}:{port}"
+
+        # 3. Fallback Port Discovery (9223, 9224) jika port 9222 macet atau bentrok
+        candidates = [9223, 9224] if port == 9222 else [9222, 9223]
+        for f_port in candidates:
+            if is_cdp_endpoint_ready(f_port, host):
+                logger.info(f"Ditemukan browser aktif di fallback port {f_port}")
+                new_url = f"http://{host}:{f_port}"
+                if self.config:
+                    self.config.set("browser_cdp_url", new_url)
+                return new_url
+
+            logger.info(f"Mencoba meluncurkan browser di fallback port {f_port}...")
+            if self.launch_debug_browser(cdp_port=f_port):
+                for _ in range(8):
+                    await asyncio.sleep(0.25)
+                    if is_cdp_endpoint_ready(f_port, host):
+                        logger.info(f"Browser siap di fallback port {f_port}")
+                        new_url = f"http://{host}:{f_port}"
+                        if self.config:
+                            self.config.set("browser_cdp_url", new_url)
+                        return new_url
+
+        raise RuntimeError(
+            f"CDP Refused: Tidak dapat terhubung ke browser di port {port}. "
+            "Harap tutup semua jendela Chrome di Task Manager lalu klik Attach kembali."
+        )
+
     async def connect_cdp(self, cdp_url: str = "http://localhost:9222") -> Page:
+        effective_url = await self.ensure_browser_running(cdp_url)
+
         if not self.playwright:
             self.playwright = await async_playwright().start()
 
-        self.browser = await self.playwright.chromium.connect_over_cdp(cdp_url)
+        try:
+            self.browser = await self.playwright.chromium.connect_over_cdp(effective_url)
+        except Exception as e:
+            logger.error(f"Gagal connect_over_cdp ke {effective_url}: {e}")
+            raise RuntimeError(
+                f"CDP Refused: Gagal terhubung ke {effective_url}. "
+                "Tutup semua jendela Chrome lalu klik Attach kembali."
+            ) from e
+
         contexts = self.browser.contexts
         if contexts:
             self.context = contexts[0]

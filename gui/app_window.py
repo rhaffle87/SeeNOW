@@ -6,7 +6,7 @@ import customtkinter as ctk
 from typing import Dict, Any, List
 from core.config_manager import ConfigManager, validate_url, get_base_dir
 from core.agent_worker import AgentWorker
-from gui.components import StatusBadge, AnswerCard
+from gui.components import StatusBadge, AnswerCard, add_tooltip
 
 logger = logging.getLogger("SeeNOW.GUI")
 
@@ -337,6 +337,24 @@ class VisionQuizApp(ctk.CTk):
             anchor="w"
         )
         self.lbl_status_msg.pack(side="left", fill="x", expand=True)
+
+        self._attach_tooltips()
+
+    def _attach_tooltips(self):
+        add_tooltip(self.btn_attach, "Launches local Chrome/Edge on CDP port 9222 with persistent profile, or attaches if already running.")
+        add_tooltip(self.tab_menu, "Selects the active quiz iframe/tab or refreshes the list of open browser tabs.")
+        add_tooltip(self.btn_refresh, "Refreshes the list of open browser tabs.")
+        add_tooltip(self.mode_menu, "Click: Solves & selects answer manually | Auto: Solves, clicks answer & auto-advances Next | Read-Only: Displays proof without clicking browser DOM.")
+        add_tooltip(self.btn_solve, "Captures current screen, queries 9router LLM, records notary log, and executes selected answer(s) (Alt+S).")
+        add_tooltip(self.btn_loop, "Continuously runs the Observe-Think-Act loop across all quiz questions until the final submit page (Alt+A).")
+        add_tooltip(self.btn_stop, "Immediately halts the continuous auto-loop process (Alt+Q).")
+        add_tooltip(self.btn_overlay, "Injects red Set-of-Marks [ID] bounding boxes on live browser for 3 seconds to verify visual element detection.")
+        add_tooltip(self.btn_export, "Exports all recorded session questions, reasoning proofs, and correct answers into a formatted Markdown report (.md).")
+        add_tooltip(self.btn_compact, "Collapses the window into a sleek Mini-Bar (360x125) or expands to full HUD workspace.")
+        add_tooltip(self.btn_opacity, "Cycles window transparency (100% -> 82% -> 60%) so underlying quiz questions remain visible.")
+        add_tooltip(self.btn_pin, "Pins HUD window always-on-top above browser and other apps.")
+        add_tooltip(self.btn_settings, "Toggles settings drawer for 9router API key, models, delay, and stealth options.")
+        add_tooltip(self.status_badge, "Current execution status of the SeeNOW agent.")
 
     def _build_settings_drawer(self):
         self.settings_frame = ctk.CTkScrollableFrame(
