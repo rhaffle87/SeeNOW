@@ -32,3 +32,25 @@ def test_agent_worker_start_and_exit():
     worker.dispatch("exit")
     worker.join(timeout=3.0)
     assert not worker.is_alive()
+
+def test_agent_worker_exam_result_page():
+    import asyncio
+    from unittest.mock import MagicMock, AsyncMock
+
+    cfg = ConfigManager()
+    worker = AgentWorker(cfg, lambda s, m: None, lambda d: None)
+    worker.is_running = True
+    worker.browser_engine = MagicMock()
+    worker.browser_engine.is_connection_alive = AsyncMock(return_value=True)
+    worker.browser_engine.auto_focus_exam_tab = AsyncMock()
+
+    page = MagicMock()
+    page.url = "https://talent.shixizhi.huawei.com/iexam/123/examResult?examId=456"
+    worker.browser_engine.page = page
+
+    async def run():
+        return await worker._do_solve_once()
+
+    res = asyncio.run(run())
+    assert res is False
+    assert worker.is_running is False

@@ -51,3 +51,50 @@ def test_is_connection_alive_switches_stale_page():
     alive, switched = asyncio.run(run())
     assert alive is True
     assert switched is True
+
+def test_apply_anti_blur_stealth_registers_init_script():
+    async def run():
+        engine = BrowserEngine()
+        engine.context = MagicMock()
+        engine.context.add_init_script = AsyncMock()
+
+        page = MagicMock()
+        page.is_closed.return_value = False
+        page.evaluate = AsyncMock()
+        engine.page = page
+
+        await engine.apply_anti_blur_stealth(page)
+        engine.context.add_init_script.assert_called_once()
+        page.evaluate.assert_called_once()
+        # Verify script contains key anti-cheat protections
+        script_arg = engine.context.add_init_script.call_args[0][0]
+        assert "hasFocus" in script_arg
+        assert "visibilityState" in script_arg
+        assert "window.open" in script_arg
+
+    asyncio.run(run())
+
+def test_auto_focus_exam_tab_selects_exam_content():
+    async def run():
+        engine = BrowserEngine()
+        engine.context = MagicMock()
+
+        intro_page = MagicMock()
+        intro_page.is_closed.return_value = False
+        intro_page.url = "https://talent.shixizhi.huawei.com/iexam/123/examInfo?examId=456"
+
+        exam_page = MagicMock()
+        exam_page.is_closed.return_value = False
+        exam_page.url = "https://talent.shixizhi.huawei.com/iexam/123/examContent?examId=456"
+        exam_page.bring_to_front = AsyncMock()
+        exam_page.evaluate = AsyncMock()
+
+        engine.context.pages = [intro_page, exam_page]
+        engine.page = intro_page
+
+        focused = await engine.auto_focus_exam_tab()
+        assert focused == exam_page
+        assert engine.page == exam_page
+        exam_page.bring_to_front.assert_called_once()
+
+    asyncio.run(run())

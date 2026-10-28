@@ -114,7 +114,7 @@ class LLMRouterClient:
                     model=model_name,
                     messages=messages,
                     response_format={"type": "json_object"},
-                    max_tokens=350,
+                    max_tokens=700,
                     temperature=0.0
                 )
                 raw = resp.choices[0].message.content
@@ -136,7 +136,7 @@ class LLMRouterClient:
                 model=fallback_name,
                 messages=messages,
                 response_format={"type": "json_object"},
-                max_tokens=350,
+                max_tokens=700,
                 temperature=0.0
             )
             raw = resp.choices[0].message.content

@@ -110,17 +110,36 @@ class BrowserEngine:
         pages = self.context.pages
         if pages:
             best = pages[0]
+            # Prioritaskan tab yang URL-nya mengandung examContent atau kuis aktif
             for p in pages:
                 url = p.url.lower()
-                if not url.startswith("chrome://") and not url.startswith("about:blank") and not url.startswith("edge://"):
+                if "examcontent" in url or "quiz" in url or "assessment" in url:
                     best = p
                     break
+                elif not url.startswith("chrome://") and not url.startswith("about:blank") and not url.startswith("edge://"):
+                    best = p
             self.page = best
         else:
             self.page = await self.context.new_page()
 
         if self.config and self.config.get("prevent_blur_detection", True):
             await self.apply_anti_blur_stealth(self.page)
+
+        # Pasang listener otomatis bila ada tab popup lembar ujian terbuka
+        async def _on_new_page(new_p: Page):
+            await asyncio.sleep(0.4)
+            url_lower = new_p.url.lower()
+            if "examcontent" in url_lower or "exam" in url_lower or "quiz" in url_lower:
+                self.page = new_p
+                self.active_frame = self.page
+                logger.info(f"Otomatis mengunci ke tab lembar ujian baru: {new_p.url}")
+                if self.config and self.config.get("prevent_blur_detection", True):
+                    await self.apply_anti_blur_stealth(self.page)
+
+        try:
+            self.context.on("page", lambda p: asyncio.create_task(_on_new_page(p)))
+        except Exception:
+            pass
 
         return self.page
 
@@ -199,23 +218,104 @@ class BrowserEngine:
             self.active_frame = None
             return False
 
-    async def apply_anti_blur_stealth(self, page: Page):
+    async def apply_anti_blur_stealth(self, target: Optional[Page] = None):
         stealth_js = """
         (() => {
             try {
-                Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
-                Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
-                window.addEventListener('blur', (e) => e.stopImmediatePropagation(), true);
-                window.addEventListener('visibilitychange', (e) => e.stopImmediatePropagation(), true);
-                document.addEventListener('visibilitychange', (e) => e.stopImmediatePropagation(), true);
-            } catch(e) {}
+                // 1. Force Page Visibility API
+                const defineVis = (targetObj) => {
+                    try {
+                        Object.defineProperty(targetObj, 'visibilityState', { get: () => 'visible', configurable: true });
+                        Object.defineProperty(targetObj, 'hidden', { get: () => false, configurable: true });
+                        Object.defineProperty(targetObj, 'webkitVisibilityState', { get: () => 'visible', configurable: true });
+                        Object.defineProperty(targetObj, 'webkitHidden', { get: () => false, configurable: true });
+                    } catch(e) {}
+                };
+                defineVis(document);
+                if (typeof Document !== 'undefined' && Document.prototype) {
+                    defineVis(Document.prototype);
+                }
+
+                // 2. Force hasFocus
+                if (typeof Document !== 'undefined' && Document.prototype) {
+                    Document.prototype.hasFocus = () => true;
+                }
+                document.hasFocus = () => true;
+
+                // 3. Nullify inline event handlers
+                window.onblur = null;
+                window.onfocus = null;
+                document.onvisibilitychange = null;
+                window.onpagehide = null;
+
+                // 4. Trap and discard all blur, focusout, visibilitychange, pagehide events
+                const blockEvent = (e) => {
+                    e.stopImmediatePropagation();
+                    e.stopPropagation();
+                };
+
+                const targetEvents = ['blur', 'focusout', 'visibilitychange', 'webkitvisibilitychange', 'pagehide'];
+                targetEvents.forEach(evt => {
+                    window.addEventListener(evt, blockEvent, true);
+                    document.addEventListener(evt, blockEvent, true);
+                });
+
+                // 5. Intercept window.open to prevent duplicate/blank tab spawning on exam portals
+                const origOpen = window.open;
+                window.open = function(url, target, features) {
+                    if (url && typeof url === 'string') {
+                        window.location.href = url;
+                        return window;
+                    }
+                    return origOpen ? origOpen.apply(this, arguments) : null;
+                };
+
+                // 6. Rewrite target="_blank" links
+                document.addEventListener('click', (e) => {
+                    const a = e.target && e.target.closest ? e.target.closest('a') : null;
+                    if (a && a.target === '_blank') {
+                        a.target = '_self';
+                    }
+                }, true);
+            } catch(err) {}
         })();
         """
-        try:
-            await page.add_init_script(stealth_js)
-            await page.evaluate(stealth_js)
-        except Exception as e:
-            logger.warning(f"Gagal menyuntikkan script anti-blur: {e}")
+        # Inject at Context level so all pages, popups, and iframes inherit stealth
+        if self.context:
+            try:
+                await self.context.add_init_script(stealth_js)
+            except Exception as e:
+                logger.debug(f"Context add_init_script note: {e}")
+
+        # Also inject immediately into target page or self.page
+        p = target or self.page
+        if p and not p.is_closed():
+            try:
+                await p.evaluate(stealth_js)
+            except Exception as e:
+                logger.debug(f"Page evaluate stealth note: {e}")
+
+    async def auto_focus_exam_tab(self) -> Optional[Page]:
+        if not self.context:
+            return None
+        pages = self.context.pages
+        for p in pages:
+            if p.is_closed():
+                continue
+            url = p.url.lower()
+            if "examcontent" in url or "quiz" in url or "assessment" in url:
+                if self.page != p:
+                    self.page = p
+                    self.active_frame = self.page
+                    try:
+                        await self.page.bring_to_front()
+                    except Exception:
+                        pass
+                    if self.config and self.config.get("prevent_blur_detection", True):
+                        await self.apply_anti_blur_stealth(self.page)
+                    logger.info(f"Otomatis mengunci ke tab lembar ujian: {p.url}")
+                return self.page
+        return self.page
 
     async def find_best_quiz_frame(self) -> Optional[Union[Page, Frame]]:
         if not self.page:
@@ -244,14 +344,19 @@ class BrowserEngine:
         return best_frame
 
     async def capture_som_state(self) -> Tuple[str, List[Dict[str, Any]], str]:
-        if not self.page:
-            raise RuntimeError("Browser belum terhubung.")
+        if not self.page or self.page.is_closed():
+            raise RuntimeError("Browser belum terhubung atau tab telah ditutup.")
 
         target = await self.find_best_quiz_frame()
         if not target:
             raise RuntimeError("Tidak dapat menemukan frame kuis.")
-        await target.evaluate(self.som_script)
-        elements = await target.evaluate("window.injectSoM()")
+
+        try:
+            await target.evaluate(self.som_script)
+            elements = await target.evaluate("window.injectSoM()")
+        except Exception as e:
+            logger.warning(f"Gagal menyuntikkan SoM: {e}")
+            raise RuntimeError(f"Gagal menyuntikkan SoM pada halaman: {e}")
 
         # Penanganan viewport: auto-scroll jika elemen terlalu sedikit atau tidak ada tombol navigasi
         def has_navigation_candidate(els: List[Dict[str, Any]]) -> bool:
@@ -282,19 +387,23 @@ class BrowserEngine:
             except Exception:
                 pass
 
-        # Ambil screenshot JPEG 70%
-        raw_bytes = await self.page.screenshot(type="jpeg", quality=70, full_page=False)
+        # Ambil screenshot JPEG 65%
+        try:
+            raw_bytes = await self.page.screenshot(type="jpeg", quality=65, full_page=False)
+        except Exception as e:
+            logger.warning(f"Gagal mengambil screenshot: {e}")
+            raise RuntimeError(f"Gagal mengambil screenshot halaman: {e}")
 
-        # Kompresi bandwidth cerdas: Batasi resolusi maksimal lebar 1280px jika layar ultra-HD
+        # Kompresi bandwidth cerdas: Batasi resolusi maksimal lebar 1024px agar inferensi vision kilat (<2-3 detik)
         try:
             with Image.open(io.BytesIO(raw_bytes)) as pil_img:
                 w, h = pil_img.size
-                if w > 1280:
-                    new_w = 1280
-                    new_h = int(h * (1280 / w))
+                if w > 1024:
+                    new_w = 1024
+                    new_h = int(h * (1024 / w))
                     resized_img = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
                     buf = io.BytesIO()
-                    resized_img.save(buf, format="JPEG", quality=70, optimize=True)
+                    resized_img.save(buf, format="JPEG", quality=65, optimize=True)
                     raw_bytes = buf.getvalue()
         except Exception:
             pass
@@ -302,7 +411,10 @@ class BrowserEngine:
         screenshot_b64 = base64.b64encode(raw_bytes).decode("utf-8")
 
         # Hapus overlay visual saja, pertahankan data-som-id untuk locator
-        await target.evaluate("window.removeSoM(false)")
+        try:
+            await target.evaluate("window.removeSoM(false)")
+        except Exception:
+            pass
 
         summary_lines = []
         for el in elements:

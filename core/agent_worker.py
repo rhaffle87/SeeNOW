@@ -125,6 +125,19 @@ class AgentWorker(threading.Thread):
         if not await self._ensure_connected():
             return False
 
+        # 1. Otomatis fokus & kunci ke tab ujian jika ada tab examContent terbuka di background
+        await self.browser_engine.auto_focus_exam_tab()
+
+        current_url = (self.browser_engine.page.url if self.browser_engine.page else "").lower()
+
+        # Deteksi halaman hasil ujian (examResult)
+        if "examresult" in current_url:
+            self.status_cb("Exam Ended", "Ujian selesai. Skor/Hasil ujian terdeteksi.")
+            logger.info("Mendeteksi halaman hasil ujian (examResult). Auto-loop dihentikan.")
+            if self.is_running:
+                self.stop_loop()
+            return False
+
         t_start = time.time()
         self.status_cb("Capturing...", "Memotret & memetakan DOM...")
         try:
@@ -136,6 +149,34 @@ class AgentWorker(threading.Thread):
         if not elements:
             self.status_cb("Warning", "Tidak ada elemen interaktif terdeteksi di viewport.")
             return False
+
+        # Deteksi jika saat ini masih di halaman pengantar ujian (examInfo)
+        if "examinfo" in current_url:
+            start_btn = next(
+                (el for el in elements if any(kw in (el.get("text") or "").lower() for kw in ("start answering", "start exam", "mulai ujian", "mulai kerjakan", "start"))),
+                None
+            )
+            if start_btn:
+                self.status_cb("Starting Exam...", "Mendeteksi halaman pengantar. Memulai ujian...")
+                logger.info(f"Mengklik tombol Mulai Ujian [{start_btn['id']}]: {start_btn.get('text')}")
+                await self.browser_engine.click_element(start_btn["id"], elements, delay=0.1)
+
+                # Tunggu navigasi in-place ke examContent
+                for _ in range(16):
+                    await asyncio.sleep(0.25)
+                    await self.browser_engine.auto_focus_exam_tab()
+                    c_url = (self.browser_engine.page.url if self.browser_engine.page else "").lower()
+                    if "examcontent" in c_url:
+                        self.status_cb("Exam Loaded", "Berhasil masuk ke lembar ujian aktif.")
+                        logger.info("Berhasil masuk ke lembar ujian aktif (examContent).")
+                        await asyncio.sleep(0.4)
+                        return True
+
+                self.status_cb("Waiting...", "Menunggu lembar ujian dimuat...")
+                return False
+            else:
+                self.status_cb("Non-Quiz Tab", "Bukan halaman soal. Harap buka tab ujian.")
+                return False
 
         # Smart Question Cache Check
         enable_cache = self.config.get("enable_question_cache", True)
@@ -197,6 +238,16 @@ class AgentWorker(threading.Thread):
             self.status_cb("Clicking...", f"Memilih opsi ID: {correct_ids}")
             for opt_id in correct_ids:
                 await self.browser_engine.click_element(opt_id, elements, delay=0.06)
+        else:
+            # Jika tidak ada opsi terpilih dan di layar tidak ada pilihan ganda (misal tab pengantar)
+            has_options = any(
+                el.get("tag") == "input" or el.get("role") in ("radio", "checkbox") or "option" in el.get("text", "").lower()
+                for el in elements
+            )
+            if not has_options:
+                self.status_cb("Non-Quiz Tab", "Bukan halaman soal. Beralih ke tab lembar ujian.")
+                logger.warning("Tidak ada elemen pilihan ganda di tab ini. Auto-loop dijeda agar tidak salah klik.")
+                return False
 
         is_final = analysis.get("is_final_submit", False)
         next_id = analysis.get("next_button_id")
@@ -221,23 +272,23 @@ class AgentWorker(threading.Thread):
                 old_hash = await self.browser_engine.get_question_hash()
 
                 # Eksekusi klik tombol Next
-                clicked = await self.browser_engine.click_element(next_id, elements, delay=0.08)
+                clicked = await self.browser_engine.click_element(next_id, elements, delay=0.06)
                 if not clicked:
                     logger.warning(f"Gagal mengklik tombol Next [{next_id}].")
                     return False
 
-                # Anti-Skipping & SPA Verification: Tunggu hingga hash teks soal berubah
+                # Anti-Skipping & SPA Verification: Polling cepat pergantian soal (maks 0.6s)
                 changed = False
-                for _ in range(25):
-                    await asyncio.sleep(0.1)
+                for _ in range(12):
+                    await asyncio.sleep(0.05)
                     new_hash = await self.browser_engine.get_question_hash()
                     if new_hash and new_hash != old_hash:
                         changed = True
                         break
 
                 if not changed:
-                    logger.warning("Deteksi soal belum berganti setelah klik Next. Menunggu 0.5s ekstra.")
-                    await asyncio.sleep(0.5)
+                    logger.warning("Deteksi soal belum berganti setelah klik Next. Menunggu 0.2s ekstra.")
+                    await asyncio.sleep(0.2)
 
                 duration = round(time.time() - t_start, 2)
                 self.status_cb("Idle", f"Soal selesai dalam {duration}s.")
