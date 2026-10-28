@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "seenow"
+version = "1.0.0"
+description = "SeeNOW (Smart Exam Engine & Navigated Optical Workflow) — High-speed autonomous browser agent powered by Set-of-Marks visual grounding and OpenAI-compatible multi-provider LLM routers."
+readme = "README.md"
+authors = [{ name = "SeeNOW Team" }]
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "playwright>=1.49.0",
+    "openai>=1.58.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "customtkinter>=5.2.0",
+    "pillow>=11.0.0",
+    "mss>=9.0.2",
+    "pyautogui>=0.9.54",
+    "keyboard>=0.13.5",
+    "python-dotenv>=1.0.1",
+    "pyinstaller>=6.11.0"
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+exclude = [
+    ".git",
+    "__pycache__",
+    "build",
+    "dist",
+    "chrome_profile"
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]
+
+[tool.mypy]
+follow_imports = "silent"
+warn_return_any = false
+warn_unused_configs = true
+ignore_missing_imports = true
+explicit_package_bases = true
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q"
+testpaths = [
+    "tests",
+]
+
+[tool.bandit]
+exclude_dirs = ["tests", "dist", "build", "chrome_profile"]
+skips = ["B404", "B603", "B607"]

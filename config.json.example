@@ -1,0 +1,14 @@
+{
+  "router_base_url": "http://localhost:20128/v1",
+  "router_api_key": "YOUR_API_KEY_HERE",
+  "primary_vision_model": "ag/gemini-3.8-flash-high",
+  "fallback_vision_model": "ag/gemini-3.8-flash-high",
+  "browser_cdp_url": "http://localhost:9222",
+  "execution_mode": "auto_click_answer_only",
+  "action_delay": 1.0,
+  "auto_submit_final": false,
+  "always_on_top": true,
+  "prevent_blur_detection": true,
+  "request_timeout_sec": 25,
+  "max_retries": 2
+}
