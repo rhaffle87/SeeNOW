@@ -49,17 +49,29 @@ class ConfigManager:
         self.data: Dict[str, Any] = self.load()
 
     def load(self) -> Dict[str, Any]:
+        cfg = DEFAULT_CONFIG.copy()
         if os.path.exists(self.config_path):
             try:
                 with open(self.config_path, "r", encoding="utf-8") as f:
                     saved = json.load(f)
-                    cfg = DEFAULT_CONFIG.copy()
                     cfg.update(saved)
                     return cfg
             except Exception as e:
                 logger.warning(f"Gagal membaca {self.config_path}: {e}")
                 return DEFAULT_CONFIG.copy()
-        return DEFAULT_CONFIG.copy()
+
+        # Bootstrap dari config.json.example jika tersedia
+        example_path = os.path.join(get_base_dir(), "config.json.example")
+        if os.path.exists(example_path):
+            try:
+                with open(example_path, "r", encoding="utf-8") as f:
+                    example_data = json.load(f)
+                    cfg.update(example_data)
+                    logger.info("Berhasil mem-bootstrap konfigurasi awal dari config.json.example.")
+            except Exception as e:
+                logger.warning(f"Gagal bootstrap dari config.json.example: {e}")
+
+        return cfg
 
     def save(self, new_data: Dict[str, Any]):
         # Validasi URL sebelum menyimpan
@@ -68,12 +80,21 @@ class ConfigManager:
             raise ValueError(f"URL endpoint tidak valid (wajib diawali http:// atau https://): {target_url}")
 
         self.data.update(new_data)
+        tmp_path = f"{self.config_path}.tmp"
         try:
-            with open(self.config_path, "w", encoding="utf-8") as f:
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, indent=2, ensure_ascii=False)
-            logger.info("Konfigurasi berhasil disimpan.")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, self.config_path)
+            logger.info("Konfigurasi berhasil disimpan secara atomik.")
         except Exception as e:
-            logger.error(f"Gagal menulis file konfigurasi: {e}")
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+            logger.error(f"Gagal menulis file konfigurasi secara atomik: {e}")
             raise e
 
     def get(self, key: str, default: Any = None) -> Any:

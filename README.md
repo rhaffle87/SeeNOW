@@ -4,9 +4,9 @@
 # 🚀 SeeNOW
 ### Smart Exam Engine & Navigated Optical Workflow
 
-[![CI Multi-OS](https://github.com/your-username/seenow/actions/workflows/ci.yml/badge.svg)](https://github.com/your-username/seenow/actions/workflows/ci.yml)
-[![Security Scan](https://github.com/your-username/seenow/actions/workflows/security.yml/badge.svg)](https://github.com/your-username/seenow/actions/workflows/security.yml)
-[![CodeQL](https://github.com/your-username/seenow/actions/workflows/codeql.yml/badge.svg)](https://github.com/your-username/seenow/actions/workflows/codeql.yml)
+[![CI Multi-OS](https://github.com/rhaffle87/seenow/actions/workflows/ci.yml/badge.svg)](https://github.com/rhaffle87/seenow/actions/workflows/ci.yml)
+[![Security Scan](https://github.com/rhaffle87/seenow/actions/workflows/security.yml/badge.svg)](https://github.com/rhaffle87/seenow/actions/workflows/security.yml)
+[![CodeQL](https://github.com/rhaffle87/seenow/actions/workflows/codeql.yml/badge.svg)](https://github.com/rhaffle87/seenow/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://www.python.org/)
 
@@ -85,7 +85,7 @@ seenow/
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/seenow.git
+git clone https://github.com/rhaffle87/seenow.git
 cd seenow
 
 # Create virtual environment

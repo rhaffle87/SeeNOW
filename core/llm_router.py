@@ -2,6 +2,7 @@
 import re
 import time
 import json
+import random
 import logging
 from typing import Dict, Any, Optional
 from openai import OpenAI
@@ -22,13 +23,17 @@ def extract_json_from_text(raw: str) -> Dict[str, Any]:
     return json.loads(text)
 
 class QuizResponseSchema(BaseModel):
-    question_summary: str = Field(description="Ringkasan teks pertanyaan")
-    question_type: str = Field(description="Tipe: single_choice, multi_choice, true_false")
-    reasoning: str = Field(description="Bukti langkah ringkas maksimal 2 kalimat")
-    correct_option_ids: list[int] = Field(description="ID opsi yang benar")
-    correct_option_texts: list[str] = Field(description="Teks opsi")
+    question_summary: str = Field(default="", description="Ringkasan teks pertanyaan")
+    question_type: str = Field(default="single_choice", description="Tipe: single_choice, multi_choice, true_false")
+    reasoning: str = Field(default="", description="Bukti langkah ringkas maksimal 2 kalimat")
+    correct_option_ids: list[int] = Field(default_factory=list, description="ID opsi yang benar")
+    correct_option_texts: list[str] = Field(default_factory=list, description="Teks opsi")
     next_button_id: Optional[int] = Field(default=None, description="ID tombol Next")
     is_final_submit: bool = Field(default=False, description="True jika tombol submit/selesai")
+
+def validate_and_normalize_response(raw_dict: Dict[str, Any]) -> Dict[str, Any]:
+    validated = QuizResponseSchema.model_validate(raw_dict)
+    return validated.model_dump()
 
 SEENOW_FAST_SYSTEM_PROMPT = """You are SeeNOW, an ultra-fast high-accuracy exam solver.
 Rules:
@@ -113,7 +118,7 @@ class LLMRouterClient:
                     temperature=0.0
                 )
                 raw = resp.choices[0].message.content
-                parsed = extract_json_from_text(raw)
+                parsed = validate_and_normalize_response(extract_json_from_text(raw))
                 elapsed = round(time.time() - t0, 2)
                 logger.info(f"Inferensi model {model_name} sukses ({elapsed}s).")
                 return parsed
@@ -121,7 +126,8 @@ class LLMRouterClient:
                 logger.warning(f"Percobaan {attempt}/{max_retries} model {model_name} gagal: {e}")
                 if attempt == max_retries:
                     break
-                time.sleep(0.4)
+                backoff = (0.5 * (2 ** (attempt - 1))) + random.uniform(0.05, 0.2)
+                time.sleep(backoff)
 
         if fallback_name and fallback_name != model_name:
             logger.info(f"Mengalihkan ke fallback model: {fallback_name}")
@@ -134,7 +140,7 @@ class LLMRouterClient:
                 temperature=0.0
             )
             raw = resp.choices[0].message.content
-            parsed = extract_json_from_text(raw)
+            parsed = validate_and_normalize_response(extract_json_from_text(raw))
             elapsed = round(time.time() - t0, 2)
             logger.info(f"Inferensi fallback model {fallback_name} sukses ({elapsed}s).")
             return parsed

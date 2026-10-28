@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-10-28
+
+### Added
+- **Shadow DOM Traversal:** Recursive `querySelectorAllDeep` in SoM injector scanning open `shadowRoot` trees and custom web-components.
+- **Viewport Auto-Scroll:** Automatic scroll-down trigger during SoM capture when options or navigation buttons are below the fold.
+- **CDP Auto-Reconnect & Stale Page Recovery:** `is_connection_alive()` watchdog with automatic tab switching and silent CDP reconnection.
+- **Atomic Config Persistence:** Atomic file writes (`config.json.tmp` + `os.replace`) with corrupted JSON recovery and automatic bootstrap from `config.json.example`.
+- **Headless Environment Resilience:** Safe lazy imports for `pyautogui`, `mss`, and `keyboard` preventing CI headless crashes.
+- **Jittered Exponential Backoff:** Exponential backoff with random jitter and strict Pydantic model validation with safe defaults in LLM router.
+
 ## [1.0.0] - 2026-10-28
 
 ### Added

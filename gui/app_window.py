@@ -1,13 +1,17 @@
 # gui/app_window.py
 import logging
 import customtkinter as ctk
-import keyboard
 from typing import Dict, Any
 from core.config_manager import ConfigManager, validate_url
 from core.agent_worker import AgentWorker
 from gui.components import StatusBadge, AnswerCard
 
 logger = logging.getLogger("SeeNOW.GUI")
+
+try:
+    import keyboard
+except Exception:
+    keyboard = None  # type: ignore
 
 MODE_DESCRIPTIONS = {
     "auto_click_and_next": "⚡ Mencentang jawaban benar dan otomatis klik Selanjutnya hingga akhir.",
@@ -67,7 +71,7 @@ class VisionQuizApp(ctk.CTk):
 
         lbl_ver = ctk.CTkLabel(
             brand_container,
-            text="v1.0.0",
+            text="v1.0.1",
             font=ctk.CTkFont(size=10, weight="bold"),
             text_color="#38bdf8",
             fg_color="#0369a1",
@@ -378,6 +382,9 @@ class VisionQuizApp(ctk.CTk):
             self._on_worker_status("Error", f"Gagal simpan: {e}")
 
     def _setup_hotkeys(self):
+        if not keyboard:
+            logger.info("Modul keyboard tidak aktif di lingkungan saat ini.")
+            return
         try:
             keyboard.add_hotkey("alt+s", lambda: self.after(0, self._solve_once))
             keyboard.add_hotkey("alt+a", lambda: self.after(0, self._start_loop))

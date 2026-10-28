@@ -1,5 +1,5 @@
 # tests/test_schema.py
-from core.llm_router import QuizResponseSchema
+from core.llm_router import QuizResponseSchema, validate_and_normalize_response
 
 def test_schema_valid():
     data = {
@@ -29,3 +29,17 @@ def test_schema_optional_next():
     schema = QuizResponseSchema(**data)
     assert schema.next_button_id is None
     assert schema.is_final_submit is True
+
+def test_schema_normalize_partial_response():
+    # Model returns minimal JSON without optional/default fields
+    partial_data = {
+        "question_summary": "Minimal Question",
+        "correct_option_ids": [3]
+    }
+    normalized = validate_and_normalize_response(partial_data)
+    assert normalized["question_summary"] == "Minimal Question"
+    assert normalized["correct_option_ids"] == [3]
+    assert normalized["question_type"] == "single_choice"
+    assert normalized["reasoning"] == ""
+    assert normalized["next_button_id"] is None
+    assert normalized["is_final_submit"] is False

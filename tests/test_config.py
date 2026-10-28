@@ -42,3 +42,23 @@ def test_config_invalid_url_rejected():
 
         with pytest.raises(ValueError):
             cfg.save({"router_base_url": "invalid_url_without_scheme"})
+
+def test_config_corrupted_json_recovery():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_cfg_file = os.path.join(tmpdir, "config.json")
+        # Write corrupted content
+        with open(tmp_cfg_file, "w") as f:
+            f.write("{corrupt_json_structure!!")
+
+        # ConfigManager should gracefully fall back to default config without crashing
+        cfg = ConfigManager(config_path=tmp_cfg_file)
+        assert cfg.get("router_base_url") == "http://localhost:20128/v1"
+
+def test_config_atomic_write_leaves_no_tmp_on_success():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_cfg_file = os.path.join(tmpdir, "config.json")
+        cfg = ConfigManager(config_path=tmp_cfg_file)
+        cfg.save({"action_delay": 3.0})
+
+        assert os.path.exists(tmp_cfg_file)
+        assert not os.path.exists(f"{tmp_cfg_file}.tmp")

@@ -118,6 +118,42 @@ class BrowserEngine:
 
         return self.page
 
+    async def is_connection_alive(self) -> bool:
+        if not self.browser:
+            return False
+
+        if self.context:
+            try:
+                pages = self.context.pages
+                if self.page is None or self.page.is_closed():
+                    alive_pages = [p for p in pages if not p.is_closed()]
+                    if alive_pages:
+                        self.page = alive_pages[-1]
+                        self.active_frame = self.page
+                        logger.info("Beralih ke tab browser aktif yang masih terbuka.")
+                    else:
+                        self.page = None
+                        self.active_frame = None
+                        return False
+            except Exception:
+                self.page = None
+                self.browser = None
+                self.active_frame = None
+                return False
+
+        if not self.page or self.page.is_closed():
+            return False
+
+        try:
+            await self.page.evaluate("() => true")
+            return True
+        except Exception as e:
+            logger.warning(f"Koneksi browser/tab terputus: {e}")
+            self.page = None
+            self.browser = None
+            self.active_frame = None
+            return False
+
     async def apply_anti_blur_stealth(self, page: Page):
         stealth_js = """
         (() => {
@@ -171,6 +207,35 @@ class BrowserEngine:
             raise RuntimeError("Tidak dapat menemukan frame kuis.")
         await target.evaluate(self.som_script)
         elements = await target.evaluate("window.injectSoM()")
+
+        # Penanganan viewport: auto-scroll jika elemen terlalu sedikit atau tidak ada tombol navigasi
+        def has_navigation_candidate(els: List[Dict[str, Any]]) -> bool:
+            nav_keywords = ("next", "selanjutnya", "berikut", "lanjut", "submit", "kirim", "jawab", "finish", "selesai")
+            for e in els:
+                t = (e.get("text") or "").lower()
+                role = (e.get("role") or "").lower()
+                tag = (e.get("tag") or "").lower()
+                if any(kw in t for kw in nav_keywords) or role == "button" or tag == "button":
+                    return True
+            return False
+
+        if len(elements) < 2 or not has_navigation_candidate(elements):
+            try:
+                scrolled = await target.evaluate("""
+                    () => {
+                        if (document.documentElement.scrollHeight > window.innerHeight) {
+                            window.scrollBy(0, 350);
+                            return true;
+                        }
+                        return false;
+                    }
+                """)
+                if scrolled:
+                    await asyncio.sleep(0.12)
+                    await target.evaluate(self.som_script)
+                    elements = await target.evaluate("window.injectSoM()")
+            except Exception:
+                pass
 
         # Ambil screenshot JPEG 70%
         raw_bytes = await self.page.screenshot(type="jpeg", quality=70, full_page=False)

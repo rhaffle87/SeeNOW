@@ -60,7 +60,7 @@ class AgentWorker(threading.Thread):
             self.loop.call_soon_threadsafe(self.task_queue.put_nowait, (cmd, args))
 
     async def _ensure_connected(self) -> bool:
-        if not self.browser_engine.page:
+        if not await self.browser_engine.is_connection_alive():
             self.status_cb("Connecting...", "Menghubungkan ke browser via CDP...")
             try:
                 cdp_url = self.config.get("browser_cdp_url", "http://localhost:9222")

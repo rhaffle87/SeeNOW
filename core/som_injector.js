@@ -8,9 +8,31 @@
             existing.remove();
         }
         if (cleanAttributes) {
-            document.querySelectorAll('[data-som-id]').forEach(el => el.removeAttribute('data-som-id'));
+            querySelectorAllDeep('[data-som-id]').forEach(el => el.removeAttribute('data-som-id'));
         }
     };
+
+    function querySelectorAllDeep(selector, root = document) {
+        const results = [];
+        function collect(currentRoot) {
+            if (!currentRoot) return;
+            try {
+                const elements = currentRoot.querySelectorAll(selector);
+                for (let i = 0; i < elements.length; i++) {
+                    results.push(elements[i]);
+                }
+            } catch(e) {}
+
+            const allElements = currentRoot.querySelectorAll('*');
+            for (let i = 0; i < allElements.length; i++) {
+                if (allElements[i].shadowRoot) {
+                    collect(allElements[i].shadowRoot);
+                }
+            }
+        }
+        collect(root);
+        return Array.from(new Set(results));
+    }
 
     window.injectSoM = function() {
         window.removeSoM(true);
@@ -50,9 +72,9 @@
             '[onclick]'
         ];
 
-        const allCandidates = Array.from(document.querySelectorAll(selectors.join(', ')));
+        const allCandidates = querySelectorAllDeep(selectors.join(', '), document);
 
-        const pointerElements = Array.from(document.querySelectorAll('div, span, li')).filter(el => {
+        const pointerElements = querySelectorAllDeep('div, span, li', document).filter(el => {
             const style = window.getComputedStyle(el);
             return style.cursor === 'pointer' && el.innerText && el.innerText.trim().length > 0 && el.innerText.length < 150;
         });

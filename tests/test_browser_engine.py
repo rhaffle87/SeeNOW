@@ -1,7 +1,8 @@
 # tests/test_browser_engine.py
 import os
 import sys
-from unittest.mock import patch
+import asyncio
+from unittest.mock import patch, MagicMock, AsyncMock
 from core.browser_engine import resource_path, BrowserEngine
 
 def test_resource_path():
@@ -20,3 +21,33 @@ def test_find_chrome_executable():
     if exe is not None:
         assert isinstance(exe, str)
         assert os.path.isfile(exe)
+
+def test_is_connection_alive_when_disconnected():
+    async def run():
+        engine = BrowserEngine()
+        return await engine.is_connection_alive()
+
+    assert asyncio.run(run()) is False
+
+def test_is_connection_alive_switches_stale_page():
+    async def run():
+        engine = BrowserEngine()
+        engine.browser = MagicMock()
+        engine.context = MagicMock()
+
+        stale_page = MagicMock()
+        stale_page.is_closed.return_value = True
+
+        active_page = MagicMock()
+        active_page.is_closed.return_value = False
+        active_page.evaluate = AsyncMock(return_value=True)
+
+        engine.context.pages = [stale_page, active_page]
+        engine.page = stale_page
+
+        alive = await engine.is_connection_alive()
+        return alive, engine.page == active_page
+
+    alive, switched = asyncio.run(run())
+    assert alive is True
+    assert switched is True

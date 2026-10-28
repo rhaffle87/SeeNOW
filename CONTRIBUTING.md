@@ -6,7 +6,7 @@ We welcome contributions to SeeNOW! Please read these guidelines before submitti
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/your-username/seenow.git
+   git clone https://github.com/rhaffle87/seenow.git
    cd seenow
    ```
 
@@ -26,7 +26,7 @@ We welcome contributions to SeeNOW! Please read these guidelines before submitti
    ```bash
    pytest
    ruff check .
-   mypy core
+   mypy core gui main.py
    bandit -r core gui main.py -ll
    ```
 
