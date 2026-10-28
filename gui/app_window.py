@@ -15,17 +15,17 @@ try:
 except Exception:
     keyboard = None  # type: ignore
 
-MODE_DESCRIPTIONS = {
-    "auto_click_and_next": "⚡ Mencentang jawaban benar dan otomatis klik Selanjutnya hingga akhir.",
-    "auto_click_answer_only": "🎯 Mencentang jawaban benar dan menunggu Anda meninjau sebelum klik manual.",
-    "read_only": "👁️ Hanya menampilkan jawaban & bukti analitis tanpa menyentuh DOM browser."
+MODE_MAP_TO_KEY = {
+    "🎯 Click": "auto_click_answer_only",
+    "⚡ Auto": "auto_click_and_next",
+    "👁️ Read": "read_only"
 }
 
-MODE_LABELS = [
-    ("⚡ Full Auto", "auto_click_and_next"),
-    ("🎯 Click Only", "auto_click_answer_only"),
-    ("👁️ Read-Only", "read_only")
-]
+MODE_MAP_TO_DISPLAY = {
+    "auto_click_answer_only": "🎯 Click",
+    "auto_click_and_next": "⚡ Auto",
+    "read_only": "👁️ Read"
+}
 
 class VisionQuizApp(ctk.CTk):
     def __init__(self, config_manager: ConfigManager):
@@ -36,12 +36,20 @@ class VisionQuizApp(ctk.CTk):
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
 
-        self.title("SeeNOW — Smart Exam Engine & Navigated Optical Workflow")
-        self.geometry("540x700")
-        self.minsize(480, 620)
-        self.configure(fg_color="#090d16")
+        self.title("SeeNOW HUD")
+        self.geometry("380x430")
+        self.minsize(310, 125)
+        self.resizable(True, True)
+        self.configure(fg_color="#09090b")
 
-        # Inisialisasi background worker
+        # State flags
+        self.is_compact = False
+        self.is_settings_open = False
+        self.prev_geometry = "380x430"
+        self.alpha_levels = [1.0, 0.82, 0.60]
+        self.alpha_idx = 0
+
+        # Background worker
         self.worker = AgentWorker(
             config_manager=self.config,
             status_callback=self._on_worker_status,
@@ -57,390 +65,493 @@ class VisionQuizApp(ctk.CTk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_ui(self):
-        # 1. Header Bar
-        self.header_frame = ctk.CTkFrame(self, fg_color="#0f172a", corner_radius=0, height=50, border_width=1, border_color="#1e293b")
-        self.header_frame.pack(side="top", fill="x")
+        # Configure root grid weights
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=0)  # Row 0: Header
+        self.grid_rowconfigure(1, weight=0)  # Row 1: Connection & Mode
+        self.grid_rowconfigure(2, weight=0)  # Row 2: Command Toolbar
+        self.grid_rowconfigure(3, weight=1)  # Row 3: Workspace (expands!)
+        self.grid_rowconfigure(4, weight=0)  # Row 4: Status footer
 
-        # Sisi Kiri: Brand + Badge Versi
-        brand_container = ctk.CTkFrame(self.header_frame, fg_color="transparent")
-        brand_container.pack(side="left", padx=14, pady=8)
+        # ==========================================
+        # ROW 0: Ultra-Slim Header Bar (height=32)
+        # ==========================================
+        self.header_frame = ctk.CTkFrame(self, fg_color="#121215", corner_radius=0, height=32, border_width=1, border_color="#27272a")
+        self.header_frame.grid(row=0, column=0, sticky="ew", padx=0, pady=0)
 
-        lbl_brand = ctk.CTkLabel(
-            brand_container,
-            text="SeeNOW",
-            font=ctk.CTkFont(size=16, weight="bold"),
-            text_color="#f8fafc"
+        # Header Left
+        hdr_left = ctk.CTkFrame(self.header_frame, fg_color="transparent")
+        hdr_left.pack(side="left", padx=(8, 4), pady=3)
+
+        lbl_logo = ctk.CTkLabel(hdr_left, text="SeeNOW", font=ctk.CTkFont(size=12, weight="bold"), text_color="#f4f4f5")
+        lbl_logo.pack(side="left", padx=(0, 6))
+
+        self.status_badge = StatusBadge(hdr_left)
+        self.status_badge.pack(side="left", padx=(0, 6))
+
+        self.lbl_quick_ans = ctk.CTkLabel(
+            hdr_left,
+            text="ANS: —",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color="#34d399"
         )
-        lbl_brand.pack(side="left")
+        self.lbl_quick_ans.pack(side="left", padx=(2, 0))
 
-        lbl_ver = ctk.CTkLabel(
-            brand_container,
-            text="v1.1.0",
-            font=ctk.CTkFont(size=10, weight="bold"),
-            text_color="#38bdf8",
-            fg_color="#0369a1",
-            corner_radius=4,
-            padx=5,
-            pady=1
-        )
-        lbl_ver.pack(side="left", padx=(8, 0))
+        # Header Right (Icon Tools)
+        hdr_right = ctk.CTkFrame(self.header_frame, fg_color="transparent")
+        hdr_right.pack(side="right", padx=(4, 6), pady=3)
 
-        # Sisi Kanan: Always on Top Switch + Status Badge
-        ctrl_container = ctk.CTkFrame(self.header_frame, fg_color="transparent")
-        ctrl_container.pack(side="right", padx=14, pady=8)
-
-        self.cb_topmost = ctk.CTkCheckBox(
-            ctrl_container,
-            text="Pin Top",
+        self.btn_opacity = ctk.CTkButton(
+            hdr_right,
+            text="◐",
+            width=24,
+            height=22,
             font=ctk.CTkFont(size=11),
-            width=20,
-            command=self._on_topmost_toggle
+            fg_color="#18181b",
+            hover_color="#27272a",
+            text_color="#a1a1aa",
+            corner_radius=4,
+            command=self._cycle_opacity
         )
-        if self.config.get("always_on_top", True):
-            self.cb_topmost.select()
-        self.cb_topmost.pack(side="left", padx=(0, 10))
+        self.btn_opacity.pack(side="left", padx=2)
 
-        self.status_badge = StatusBadge(ctrl_container)
-        self.status_badge.pack(side="left")
-
-        # 2. Tabview
-        self.tabview = ctk.CTkTabview(
-            self,
-            fg_color="#0f172a",
-            segmented_button_fg_color="#1e293b",
-            segmented_button_selected_color="#2563eb",
-            segmented_button_selected_hover_color="#1d4ed8"
+        self.btn_pin = ctk.CTkButton(
+            hdr_right,
+            text="📌",
+            width=24,
+            height=22,
+            font=ctk.CTkFont(size=10),
+            fg_color="#18181b",
+            hover_color="#27272a",
+            text_color="#38bdf8" if self.config.get("always_on_top", True) else "#71717a",
+            corner_radius=4,
+            command=self._toggle_pin
         )
-        self.tabview.pack(fill="both", expand=True, padx=12, pady=10)
+        self.btn_pin.pack(side="left", padx=2)
 
-        self.tab_hud = self.tabview.add("Live HUD")
-        self.tab_settings = self.tabview.add("Settings & 9router")
+        self.btn_compact = ctk.CTkButton(
+            hdr_right,
+            text="🔽",
+            width=24,
+            height=22,
+            font=ctk.CTkFont(size=10),
+            fg_color="#18181b",
+            hover_color="#27272a",
+            text_color="#a1a1aa",
+            corner_radius=4,
+            command=self._toggle_compact
+        )
+        self.btn_compact.pack(side="left", padx=2)
 
-        self._build_hud_tab()
-        self._build_settings_tab()
+        self.btn_settings = ctk.CTkButton(
+            hdr_right,
+            text="⚙️",
+            width=24,
+            height=22,
+            font=ctk.CTkFont(size=11),
+            fg_color="#18181b",
+            hover_color="#27272a",
+            text_color="#a1a1aa",
+            corner_radius=4,
+            command=self._toggle_settings
+        )
+        self.btn_settings.pack(side="left", padx=2)
 
-        # 3. Bottom Bar
-        self.bottom_bar = ctk.CTkFrame(self, fg_color="#090d16", height=26, corner_radius=0)
-        self.bottom_bar.pack(side="bottom", fill="x", padx=14, pady=(0, 6))
+        # ==========================================
+        # ROW 1: Connection & Mode Bar (height=30)
+        # ==========================================
+        self.row_conn = ctk.CTkFrame(self, fg_color="#121215", height=30, corner_radius=6, border_width=1, border_color="#27272a")
+        self.row_conn.grid(row=1, column=0, sticky="ew", padx=6, pady=(4, 2))
+
+        # Attach Browser
+        self.btn_attach = ctk.CTkButton(
+            self.row_conn,
+            text="🌐 Attach",
+            font=ctk.CTkFont(size=10, weight="bold"),
+            fg_color="#18181b",
+            hover_color="#27272a",
+            text_color="#e4e4e7",
+            height=24,
+            width=68,
+            corner_radius=4,
+            command=self._launch_chrome
+        )
+        self.btn_attach.pack(side="left", padx=(6, 4), pady=3)
+
+        # Target Tab Menu
+        self.tab_menu_var = ctk.StringVar(value="[No Tabs]")
+        self.tab_menu = ctk.CTkOptionMenu(
+            self.row_conn,
+            variable=self.tab_menu_var,
+            values=["[No Tabs]"],
+            font=ctk.CTkFont(size=10),
+            fg_color="#18181b",
+            button_color="#27272a",
+            button_hover_color="#3f3f46",
+            height=24,
+            width=120,
+            corner_radius=4,
+            command=self._on_tab_selected
+        )
+        self.tab_menu.pack(side="left", fill="x", expand=True, padx=(0, 2), pady=3)
+
+        self.btn_refresh = ctk.CTkButton(
+            self.row_conn,
+            text="🔄",
+            width=24,
+            height=24,
+            font=ctk.CTkFont(size=10),
+            fg_color="#18181b",
+            hover_color="#27272a",
+            text_color="#a1a1aa",
+            corner_radius=4,
+            command=self._refresh_tabs
+        )
+        self.btn_refresh.pack(side="left", padx=(2, 6), pady=3)
+
+        # Mode Selector Menu
+        current_mode_key = self.config.get("execution_mode", "auto_click_answer_only")
+        init_mode_display = MODE_MAP_TO_DISPLAY.get(current_mode_key, "🎯 Click")
+        self.mode_menu_var = ctk.StringVar(value=init_mode_display)
+        self.mode_menu = ctk.CTkOptionMenu(
+            self.row_conn,
+            variable=self.mode_menu_var,
+            values=["🎯 Click", "⚡ Auto", "👁️ Read"],
+            font=ctk.CTkFont(size=10, weight="bold"),
+            fg_color="#18181b",
+            button_color="#27272a",
+            button_hover_color="#3f3f46",
+            height=24,
+            width=90,
+            corner_radius=4,
+            command=self._on_mode_selected
+        )
+        self.mode_menu.pack(side="right", padx=(0, 6), pady=3)
+
+        # ==========================================
+        # ROW 2: Unified Command Toolbar (height=32)
+        # ==========================================
+        self.row_tools = ctk.CTkFrame(self, fg_color="transparent")
+        self.row_tools.grid(row=2, column=0, sticky="ew", padx=6, pady=(2, 4))
+
+        self.btn_solve = ctk.CTkButton(
+            self.row_tools,
+            text="▶ Solve",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color="#10b981",
+            hover_color="#059669",
+            text_color="#ffffff",
+            height=28,
+            corner_radius=6,
+            command=self._solve_once
+        )
+        self.btn_solve.pack(side="left", fill="x", expand=True, padx=(0, 3))
+
+        self.btn_loop = ctk.CTkButton(
+            self.row_tools,
+            text="⚡ Auto",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color="#2563eb",
+            hover_color="#1d4ed8",
+            text_color="#ffffff",
+            height=28,
+            corner_radius=6,
+            command=self._start_loop
+        )
+        self.btn_loop.pack(side="left", fill="x", expand=True, padx=3)
+
+        self.btn_stop = ctk.CTkButton(
+            self.row_tools,
+            text="⏹ Stop",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color="#18181b",
+            hover_color="#27272a",
+            text_color="#a1a1aa",
+            border_width=1,
+            border_color="#27272a",
+            width=54,
+            height=28,
+            corner_radius=6,
+            command=self._stop_loop
+        )
+        self.btn_stop.pack(side="left", padx=3)
+
+        self.btn_overlay = ctk.CTkButton(
+            self.row_tools,
+            text="🎯",
+            width=28,
+            height=28,
+            font=ctk.CTkFont(size=11),
+            fg_color="#18181b",
+            hover_color="#27272a",
+            text_color="#e4e4e7",
+            border_width=1,
+            border_color="#27272a",
+            corner_radius=6,
+            command=self._test_overlay
+        )
+        self.btn_overlay.pack(side="left", padx=2)
+
+        self.btn_export = ctk.CTkButton(
+            self.row_tools,
+            text="📄",
+            width=28,
+            height=28,
+            font=ctk.CTkFont(size=11),
+            fg_color="#18181b",
+            hover_color="#27272a",
+            text_color="#e4e4e7",
+            border_width=1,
+            border_color="#27272a",
+            corner_radius=6,
+            command=self._export_notary
+        )
+        self.btn_export.pack(side="left", padx=(2, 0))
+
+        # ==========================================
+        # ROW 3: Workspace Area (AnswerCard & Settings)
+        # ==========================================
+        self.workspace_container = ctk.CTkFrame(self, fg_color="transparent")
+        self.workspace_container.grid(row=3, column=0, sticky="nsew", padx=6, pady=(0, 2))
+        self.workspace_container.grid_rowconfigure(0, weight=1)
+        self.workspace_container.grid_columnconfigure(0, weight=1)
+
+        # Main Answer Card
+        self.answer_card = AnswerCard(self.workspace_container)
+        self.answer_card.grid(row=0, column=0, sticky="nsew")
+
+        # Inline Settings Drawer (initially hidden)
+        self._build_settings_drawer()
+
+        # ==========================================
+        # ROW 4: Ultra-Slim Status Bar (height=18)
+        # ==========================================
+        self.status_bar = ctk.CTkFrame(self, fg_color="#09090b", height=18, corner_radius=0)
+        self.status_bar.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 2))
 
         self.lbl_status_msg = ctk.CTkLabel(
-            self.bottom_bar,
-            text="Siap dijalankan.",
-            font=ctk.CTkFont(size=11),
-            text_color="#64748b",
+            self.status_bar,
+            text="Siap dijalankan (Alt+S untuk uji 1 soal).",
+            font=ctk.CTkFont(size=10),
+            text_color="#71717a",
             anchor="w"
         )
         self.lbl_status_msg.pack(side="left", fill="x", expand=True)
 
-    def _build_hud_tab(self):
-        # 1-Click Chrome Launcher
-        self.btn_launch_chrome = ctk.CTkButton(
-            self.tab_hud,
-            text="🚀 Launch / Attach Chrome (CDP Port 9222)",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            fg_color="#0284c7",
-            hover_color="#0369a1",
-            height=38,
+    def _build_settings_drawer(self):
+        self.settings_frame = ctk.CTkScrollableFrame(
+            self.workspace_container,
+            fg_color="#121215",
             corner_radius=8,
-            command=self._launch_chrome
+            border_width=1,
+            border_color="#27272a"
         )
-        self.btn_launch_chrome.pack(fill="x", padx=10, pady=(8, 6))
-
-        # Target Tab Bar (Selector & Refresh)
-        self.tab_select_container = ctk.CTkFrame(self.tab_hud, fg_color="#111827", corner_radius=8, border_width=1, border_color="#1f2937")
-        self.tab_select_container.pack(fill="x", padx=10, pady=(0, 10))
-
-        lbl_tab_title = ctk.CTkLabel(
-            self.tab_select_container,
-            text="TARGET TAB:",
-            font=ctk.CTkFont(size=10, weight="bold"),
-            text_color="#94a3b8"
-        )
-        lbl_tab_title.pack(side="left", padx=(10, 6), pady=6)
-
-        self.tab_menu_var = ctk.StringVar(value="[No Tab Connected]")
-        self.tab_menu = ctk.CTkOptionMenu(
-            self.tab_select_container,
-            variable=self.tab_menu_var,
-            values=["[No Tab Connected]"],
-            font=ctk.CTkFont(size=11),
-            fg_color="#1e293b",
-            button_color="#334155",
-            button_hover_color="#475569",
-            height=28,
-            command=self._on_tab_selected
-        )
-        self.tab_menu.pack(side="left", fill="x", expand=True, padx=(0, 6), pady=6)
-
-        self.btn_refresh_tabs = ctk.CTkButton(
-            self.tab_select_container,
-            text="🔄",
-            width=32,
-            height=28,
-            font=ctk.CTkFont(size=12),
-            fg_color="#334155",
-            hover_color="#475569",
-            command=self._refresh_tabs
-        )
-        self.btn_refresh_tabs.pack(side="right", padx=(0, 8), pady=6)
-
-        # Mode Selector Container
-        mode_container = ctk.CTkFrame(self.tab_hud, fg_color="#111827", corner_radius=8, border_width=1, border_color="#1f2937")
-        mode_container.pack(fill="x", padx=10, pady=(0, 10))
-
-        lbl_mode_title = ctk.CTkLabel(mode_container, text="EXECUTION MODE", font=ctk.CTkFont(size=10, weight="bold"), text_color="#94a3b8")
-        lbl_mode_title.pack(anchor="w", padx=12, pady=(8, 4))
-
-        self.mode_var = ctk.StringVar(value=self.config.get("execution_mode", "auto_click_answer_only"))
-
-        self.mode_segmented = ctk.CTkSegmentedButton(
-            mode_container,
-            values=[m[0] for m in MODE_LABELS],
-            font=ctk.CTkFont(size=12, weight="bold"),
-            selected_color="#2563eb",
-            selected_hover_color="#1d4ed8",
-            unselected_color="#1e293b",
-            height=32,
-            command=self._on_mode_change
-        )
-        # Tentukan opsi aktif
-        initial_label = next((m[0] for m in MODE_LABELS if m[1] == self.mode_var.get()), MODE_LABELS[1][0])
-        self.mode_segmented.set(initial_label)
-        self.mode_segmented.pack(fill="x", padx=10, pady=(0, 4))
-
-        # Dynamic mode caption
-        self.lbl_mode_desc = ctk.CTkLabel(
-            mode_container,
-            text=MODE_DESCRIPTIONS.get(self.mode_var.get(), ""),
-            font=ctk.CTkFont(size=11),
-            text_color="#94a3b8",
-            wraplength=480,
-            justify="left"
-        )
-        self.lbl_mode_desc.pack(anchor="w", padx=12, pady=(0, 8))
-
-        # Action Buttons Grid (4 Tombol Utama)
-        btn_grid = ctk.CTkFrame(self.tab_hud, fg_color="transparent")
-        btn_grid.pack(fill="x", padx=10, pady=2)
-        btn_grid.grid_columnconfigure((0, 1), weight=1)
-
-        self.btn_solve = ctk.CTkButton(
-            btn_grid,
-            text="Solve Once (Alt+S)",
-            fg_color="#10b981",
-            hover_color="#059669",
-            height=38,
-            corner_radius=8,
-            font=ctk.CTkFont(size=12, weight="bold"),
-            command=self._solve_once
-        )
-        self.btn_solve.grid(row=0, column=0, padx=4, pady=4, sticky="ew")
-
-        self.btn_loop = ctk.CTkButton(
-            btn_grid,
-            text="Start Auto-Loop (Alt+A)",
-            fg_color="#3b82f6",
-            hover_color="#2563eb",
-            height=38,
-            corner_radius=8,
-            font=ctk.CTkFont(size=12, weight="bold"),
-            command=self._start_loop
-        )
-        self.btn_loop.grid(row=0, column=1, padx=4, pady=4, sticky="ew")
-
-        self.btn_overlay = ctk.CTkButton(
-            btn_grid,
-            text="Test Overlay (3s)",
-            fg_color="#f59e0b",
-            hover_color="#d97706",
-            text_color="#000000",
-            height=38,
-            corner_radius=8,
-            font=ctk.CTkFont(size=12, weight="bold"),
-            command=self._test_overlay
-        )
-        self.btn_overlay.grid(row=1, column=0, padx=4, pady=4, sticky="ew")
-
-        self.btn_stop = ctk.CTkButton(
-            btn_grid,
-            text="Stop (Alt+Q)",
-            fg_color="#f43f5e",
-            hover_color="#e11d48",
-            height=38,
-            corner_radius=8,
-            font=ctk.CTkFont(size=12, weight="bold"),
-            command=self._stop_loop
-        )
-        self.btn_stop.grid(row=1, column=1, padx=4, pady=4, sticky="ew")
-
-        # Export Notary Report Button
-        self.btn_export_notary = ctk.CTkButton(
-            self.tab_hud,
-            text="📄 Export Notary Report (.md)",
-            fg_color="#6366f1",
-            hover_color="#4f46e5",
-            height=32,
-            corner_radius=8,
-            font=ctk.CTkFont(size=12, weight="bold"),
-            command=self._export_notary
-        )
-        self.btn_export_notary.pack(fill="x", padx=14, pady=(4, 6))
-
-        # Answer Result Card
-        self.answer_card = AnswerCard(self.tab_hud)
-        self.answer_card.pack(fill="both", expand=True, padx=10, pady=(8, 10))
-
-    def _build_settings_tab(self):
-        container = ctk.CTkScrollableFrame(self.tab_settings, fg_color="transparent")
-        container.pack(fill="both", expand=True, padx=6, pady=6)
+        # Hidden by default
 
         # 9router Base URL
-        ctk.CTkLabel(container, text="9router Base URL:", font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", pady=(4, 2))
-        self.entry_url = ctk.CTkEntry(container, height=34, corner_radius=6)
+        ctk.CTkLabel(self.settings_frame, text="9router Base URL:", font=ctk.CTkFont(size=10, weight="bold"), text_color="#a1a1aa").pack(anchor="w", pady=(2, 1))
+        self.entry_url = ctk.CTkEntry(self.settings_frame, height=28, corner_radius=4, font=ctk.CTkFont(size=11), fg_color="#18181b", border_color="#27272a")
         self.entry_url.insert(0, self.config.get("router_base_url", "http://localhost:20128/v1"))
-        self.entry_url.pack(fill="x", pady=2)
+        self.entry_url.pack(fill="x", pady=(0, 4))
 
         # 9router API Key
-        ctk.CTkLabel(container, text="9router API Key:", font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", pady=(8, 2))
-        self.entry_key = ctk.CTkEntry(container, height=34, corner_radius=6, show="•")
+        ctk.CTkLabel(self.settings_frame, text="9router API Key:", font=ctk.CTkFont(size=10, weight="bold"), text_color="#a1a1aa").pack(anchor="w", pady=(2, 1))
+        self.entry_key = ctk.CTkEntry(self.settings_frame, height=28, corner_radius=4, font=ctk.CTkFont(size=11), show="•", fg_color="#18181b", border_color="#27272a")
         self.entry_key.insert(0, self.config.get("router_api_key", ""))
-        self.entry_key.pack(fill="x", pady=2)
+        self.entry_key.pack(fill="x", pady=(0, 4))
 
         # Primary Vision Model
-        ctk.CTkLabel(container, text="Primary Vision Model:", font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", pady=(8, 2))
-        self.entry_model = ctk.CTkEntry(container, height=34, corner_radius=6)
-        self.entry_model.insert(0, self.config.get("primary_vision_model", "ag/gemini-3.8-flash-high"))
-        self.entry_model.pack(fill="x", pady=2)
+        ctk.CTkLabel(self.settings_frame, text="Primary Vision Model:", font=ctk.CTkFont(size=10, weight="bold"), text_color="#a1a1aa").pack(anchor="w", pady=(2, 1))
+        self.entry_model = ctk.CTkEntry(self.settings_frame, height=28, corner_radius=4, font=ctk.CTkFont(size=11), fg_color="#18181b", border_color="#27272a")
+        self.entry_model.insert(0, self.config.get("primary_vision_model", "ag/gemini-3.8-flash-low"))
+        self.entry_model.pack(fill="x", pady=(0, 4))
 
         # Fallback Vision Model
-        ctk.CTkLabel(container, text="Fallback Vision Model:", font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", pady=(8, 2))
-        self.entry_fallback = ctk.CTkEntry(container, height=34, corner_radius=6)
-        self.entry_fallback.insert(0, self.config.get("fallback_vision_model", "ag/gemini-3.8-flash-high"))
-        self.entry_fallback.pack(fill="x", pady=2)
+        ctk.CTkLabel(self.settings_frame, text="Fallback Vision Model:", font=ctk.CTkFont(size=10, weight="bold"), text_color="#a1a1aa").pack(anchor="w", pady=(2, 1))
+        self.entry_fallback = ctk.CTkEntry(self.settings_frame, height=28, corner_radius=4, font=ctk.CTkFont(size=11), fg_color="#18181b", border_color="#27272a")
+        self.entry_fallback.insert(0, self.config.get("fallback_vision_model", "ag/gemini-2.5-flash"))
+        self.entry_fallback.pack(fill="x", pady=(0, 4))
 
         # Browser CDP Port / URL
-        ctk.CTkLabel(container, text="Browser CDP URL:", font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", pady=(8, 2))
-        self.entry_cdp = ctk.CTkEntry(container, height=34, corner_radius=6)
+        ctk.CTkLabel(self.settings_frame, text="Browser CDP URL:", font=ctk.CTkFont(size=10, weight="bold"), text_color="#a1a1aa").pack(anchor="w", pady=(2, 1))
+        self.entry_cdp = ctk.CTkEntry(self.settings_frame, height=28, corner_radius=4, font=ctk.CTkFont(size=11), fg_color="#18181b", border_color="#27272a")
         self.entry_cdp.insert(0, self.config.get("browser_cdp_url", "http://localhost:9222"))
-        self.entry_cdp.pack(fill="x", pady=2)
+        self.entry_cdp.pack(fill="x", pady=(0, 4))
 
         # Delay Slider
-        current_delay = float(self.config.get("action_delay", 1.0))
-        self.lbl_delay = ctk.CTkLabel(container, text=f"Action Delay: {current_delay:.1f}s", font=ctk.CTkFont(size=12, weight="bold"))
-        self.lbl_delay.pack(anchor="w", pady=(10, 2))
+        current_delay = float(self.config.get("action_delay", 0.5))
+        self.lbl_delay = ctk.CTkLabel(self.settings_frame, text=f"Action Delay: {current_delay:.1f}s", font=ctk.CTkFont(size=10, weight="bold"), text_color="#a1a1aa")
+        self.lbl_delay.pack(anchor="w", pady=(4, 1))
 
         self.slider_delay = ctk.CTkSlider(
-            container,
-            from_=0.2,
-            to=4.0,
-            number_of_steps=38,
+            self.settings_frame,
+            from_=0.1,
+            to=3.0,
+            number_of_steps=29,
+            height=14,
             command=self._on_slider_change
         )
         self.slider_delay.set(current_delay)
-        self.slider_delay.pack(fill="x", pady=2)
+        self.slider_delay.pack(fill="x", pady=(0, 6))
 
         # Switches
         self.switch_submit = ctk.CTkSwitch(
-            container,
-            text="Auto-Submit Final Question (Safety Guard: OFF by default)",
-            font=ctk.CTkFont(size=11)
+            self.settings_frame,
+            text="Auto-Submit Final Question",
+            font=ctk.CTkFont(size=10),
+            height=20
         )
         if self.config.get("auto_submit_final", False):
             self.switch_submit.select()
-        self.switch_submit.pack(anchor="w", pady=(12, 4))
+        self.switch_submit.pack(anchor="w", pady=2)
 
         self.switch_antiblur = ctk.CTkSwitch(
-            container,
-            text="Anti-Blur / Prevent Tab-Switch Detection",
-            font=ctk.CTkFont(size=11)
+            self.settings_frame,
+            text="Anti-Blur / Prevent Proctoring Tab-Switch",
+            font=ctk.CTkFont(size=10),
+            height=20
         )
         if self.config.get("prevent_blur_detection", True):
             self.switch_antiblur.select()
-        self.switch_antiblur.pack(anchor="w", pady=4)
+        self.switch_antiblur.pack(anchor="w", pady=2)
 
         self.switch_cache = ctk.CTkSwitch(
-            container,
-            text="Enable Smart Question Cache (Zero-latency repeat solve)",
-            font=ctk.CTkFont(size=11)
+            self.settings_frame,
+            text="Smart Cache (Zero-latency repeat solve)",
+            font=ctk.CTkFont(size=10),
+            height=20
         )
         if self.config.get("enable_question_cache", True):
             self.switch_cache.select()
-        self.switch_cache.pack(anchor="w", pady=4)
+        self.switch_cache.pack(anchor="w", pady=2)
 
-        # Action Buttons Container (Save & Export)
-        btn_action_box = ctk.CTkFrame(container, fg_color="transparent")
-        btn_action_box.pack(fill="x", pady=(18, 10))
+        # Settings Buttons
+        btn_box = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
+        btn_box.pack(fill="x", pady=(8, 4))
 
         self.btn_save = ctk.CTkButton(
-            btn_action_box,
-            text="💾 Save Settings",
-            font=ctk.CTkFont(size=13, weight="bold"),
+            btn_box,
+            text="💾 Save",
+            font=ctk.CTkFont(size=11, weight="bold"),
             fg_color="#059669",
             hover_color="#047857",
-            height=36,
-            corner_radius=8,
+            height=28,
+            corner_radius=4,
             command=self._save_settings
         )
-        self.btn_save.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        self.btn_save.pack(side="left", fill="x", expand=True, padx=(0, 4))
 
-        self.btn_export_log = ctk.CTkButton(
-            btn_action_box,
-            text="📄 View Logs",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            fg_color="#334155",
-            hover_color="#475569",
-            height=36,
-            corner_radius=8,
+        self.btn_view_logs = ctk.CTkButton(
+            btn_box,
+            text="📄 Logs",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color="#18181b",
+            hover_color="#27272a",
+            height=28,
+            width=60,
+            corner_radius=4,
             command=self._export_log
         )
-        self.btn_export_log.pack(side="right", padx=(6, 0))
+        self.btn_view_logs.pack(side="right")
 
-    def _on_topmost_toggle(self):
-        is_top = bool(self.cb_topmost.get())
-        self.attributes("-topmost", is_top)
-        self.config.set("always_on_top", is_top)
+    def _toggle_settings(self):
+        if self.is_compact:
+            self._toggle_compact()
+
+        if self.is_settings_open:
+            self.settings_frame.grid_forget()
+            self.answer_card.grid(row=0, column=0, sticky="nsew")
+            self.btn_settings.configure(fg_color="#18181b", text_color="#a1a1aa")
+            self.is_settings_open = False
+        else:
+            self.answer_card.grid_forget()
+            self.settings_frame.grid(row=0, column=0, sticky="nsew")
+            self.btn_settings.configure(fg_color="#27272a", text_color="#38bdf8")
+            self.is_settings_open = True
+
+    def _cycle_opacity(self):
+        self.alpha_idx = (self.alpha_idx + 1) % len(self.alpha_levels)
+        val = self.alpha_levels[self.alpha_idx]
+        self.attributes("-alpha", val)
+        self._on_worker_status("Opacity", f"Tingkat transparansi jendela: {int(val * 100)}%")
+
+    def _toggle_pin(self):
+        current = self.config.get("always_on_top", True)
+        new_val = not current
+        self.config.set("always_on_top", new_val)
+        self._apply_always_on_top()
+        self.btn_pin.configure(text_color="#38bdf8" if new_val else "#71717a")
+        self._on_worker_status("Pin", f"Always on Top: {'Aktif' if new_val else 'Nonaktif'}")
+
+    def _toggle_compact(self):
+        if not self.is_compact:
+            # Switch to Mini-HUD mode (360x125)
+            self.prev_geometry = self.geometry()
+            self.is_compact = True
+            self.btn_compact.configure(text="🔼")
+
+            # Close settings if open
+            if self.is_settings_open:
+                self.settings_frame.grid_forget()
+                self.btn_settings.configure(fg_color="#18181b", text_color="#a1a1aa")
+                self.is_settings_open = False
+
+            # Hide Row 1 (Connection) & Row 3 (Workspace)
+            self.row_conn.grid_forget()
+            self.workspace_container.grid_forget()
+
+            self.geometry("360x125")
+            self._on_worker_status("Compact", "Mini-HUD Mode aktif.")
+        else:
+            # Restore to full expanded mode
+            self.is_compact = False
+            self.btn_compact.configure(text="🔽")
+
+            self.row_conn.grid(row=1, column=0, sticky="ew", padx=6, pady=(4, 2))
+            self.workspace_container.grid(row=3, column=0, sticky="nsew", padx=6, pady=(0, 2))
+            self.answer_card.grid(row=0, column=0, sticky="nsew")
+
+            if self.prev_geometry:
+                self.geometry(self.prev_geometry)
+            else:
+                self.geometry("380x430")
+            self._on_worker_status("Expanded", "Expanded Mode aktif.")
 
     def _apply_always_on_top(self):
-        is_top = self.config.get("always_on_top", True)
-        self.attributes("-topmost", is_top)
+        val = self.config.get("always_on_top", True)
+        self.attributes("-topmost", val)
 
-    def _on_slider_change(self, val):
-        self.lbl_delay.configure(text=f"Action Delay: {val:.1f}s")
-
-    def _on_mode_change(self, selected_label):
-        val = "auto_click_answer_only"
-        for label, mode_key in MODE_LABELS:
-            if label == selected_label:
-                val = mode_key
-                break
-
-        self.config.set("execution_mode", val)
-        self.lbl_mode_desc.configure(text=MODE_DESCRIPTIONS.get(val, ""))
+    def _on_mode_selected(self, choice: str):
+        key = MODE_MAP_TO_KEY.get(choice, "auto_click_answer_only")
+        self.config.set("execution_mode", key)
+        self._on_worker_status("Mode", f"Mode eksekusi: {choice}")
 
     def _launch_chrome(self):
-        success = self.worker.browser_engine.launch_debug_browser(9222)
-        if success:
-            self._on_worker_status("Browser Launched", "Chrome port 9222 terbuka. Menghubungkan...")
-            self.worker.dispatch("connect_browser")
-        else:
-            self._on_worker_status("Error", "Chrome/Edge tidak ditemukan otomatis.")
+        self._on_worker_status("Connecting", "Menghubungkan ke browser CDP...")
+        self.worker.dispatch("connect_browser")
 
     def _solve_once(self):
         self.worker.dispatch("solve_once")
 
     def _start_loop(self):
+        self.btn_stop.configure(fg_color="#3f1d24", border_color="#881337", text_color="#f43f5e")
         self.worker.dispatch("auto_loop")
+
+    def _stop_loop(self):
+        self.btn_stop.configure(fg_color="#18181b", border_color="#27272a", text_color="#a1a1aa")
+        self.worker.stop_loop()
 
     def _test_overlay(self):
         self.worker.dispatch("test_overlay")
 
-    def _stop_loop(self):
-        self.worker.stop_loop()
+    def _on_slider_change(self, value):
+        delay = round(value, 1)
+        self.lbl_delay.configure(text=f"Action Delay: {delay}s")
 
     def _save_settings(self):
         url = self.entry_url.get().strip()
         if not validate_url(url):
-            self._on_worker_status("Error", "URL endpoint tidak valid (wajib http:// atau https://)")
+            self._on_worker_status("Error", "URL 9router tidak valid. Harus diawali http:// atau https://")
             return
 
         new_data = {
@@ -458,6 +569,7 @@ class VisionQuizApp(ctk.CTk):
             self.config.save(new_data)
             self.worker.llm_client.reload_config()
             self._on_worker_status("Saved", "Pengaturan berhasil disimpan.")
+            self._toggle_settings()
         except Exception as e:
             self._on_worker_status("Error", f"Gagal simpan: {e}")
 
@@ -493,14 +605,14 @@ class VisionQuizApp(ctk.CTk):
     def _apply_tabs_update(self, tabs: List[Dict[str, Any]]):
         self.open_tabs_list = tabs
         if not tabs:
-            self.tab_menu.configure(values=["[No Tab Connected]"])
-            self.tab_menu_var.set("[No Tab Connected]")
+            self.tab_menu.configure(values=["[No Tabs]"])
+            self.tab_menu_var.set("[No Tabs]")
             return
 
         titles = []
         active_title = None
         for t in tabs:
-            display = f"#{t['index']} {t['title']}"
+            display = f"#{t['index']} {t['title'][:20]}"
             titles.append(display)
             if t.get("is_active"):
                 active_title = display
@@ -512,7 +624,7 @@ class VisionQuizApp(ctk.CTk):
             self.tab_menu_var.set(titles[0])
 
     def _on_tab_selected(self, choice: str):
-        if not self.open_tabs_list or choice == "[No Tab Connected]":
+        if not self.open_tabs_list or choice == "[No Tabs]":
             return
         try:
             idx_str = choice.split()[0].replace("#", "")
@@ -541,6 +653,13 @@ class VisionQuizApp(ctk.CTk):
     def _update_status(self, status: str, message: str):
         self.status_badge.set_status(status)
         self.lbl_status_msg.configure(text=message)
+        st = status.lower()
+        if "connected" in st or "exam" in st:
+            self.btn_attach.configure(text="🌐 Connected", text_color="#34d399")
+        elif "idle" in st or "stopped" in st:
+            self.btn_stop.configure(fg_color="#18181b", border_color="#27272a", text_color="#a1a1aa")
+        elif "auto-loop" in st or "clicking" in st:
+            self.btn_stop.configure(fg_color="#3f1d24", border_color="#881337", text_color="#f43f5e")
 
     def _on_worker_result(self, analysis: Dict[str, Any]):
         self.after(0, lambda: self._update_result(analysis))
@@ -550,6 +669,10 @@ class VisionQuizApp(ctk.CTk):
         correct_ids = analysis.get("correct_option_ids", [])
         reasoning = analysis.get("reasoning", "")
         self.answer_card.update_data(q_type, correct_ids, reasoning)
+        if correct_ids:
+            self.lbl_quick_ans.configure(text=f"ANS: {correct_ids}", text_color="#34d399")
+        else:
+            self.lbl_quick_ans.configure(text="ANS: —", text_color="#a1a1aa")
 
     def _on_close(self):
         self.worker.stop_loop()
