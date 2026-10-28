@@ -28,6 +28,7 @@ config.json
 chrome_profile/
 logs/
 question_cache.json
+sessions/
 
 # OS-specific
 Thumbs.db

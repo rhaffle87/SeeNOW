@@ -7,6 +7,7 @@ from typing import Callable, Optional, Dict, Any, List
 from core.browser_engine import BrowserEngine
 from core.llm_router import LLMRouterClient
 from core.cache_manager import QuestionCacheManager, compute_question_cache_key
+from core.quiz_notary import QuizNotary
 
 logger = logging.getLogger("SeeNOW.Worker")
 
@@ -27,6 +28,8 @@ class AgentWorker(threading.Thread):
         self.browser_engine = BrowserEngine(self.config)
         self.llm_client = LLMRouterClient(self.config)
         self.cache_manager = QuestionCacheManager()
+        self.notary = QuizNotary()
+        self.question_counter = 0
 
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.is_running = False
@@ -168,6 +171,18 @@ class AgentWorker(threading.Thread):
 
         analysis["screenshot_b64"] = screenshot_b64
         self.result_cb(analysis)
+
+        # Catat hasil ke QuizNotary
+        self.question_counter += 1
+        self.notary.log_question_answer(
+            question_number=self.question_counter,
+            question_summary=analysis.get("question_summary", ""),
+            question_type=analysis.get("question_type", "unknown"),
+            reasoning=analysis.get("reasoning", ""),
+            selected_ids=analysis.get("correct_option_ids", []),
+            selected_texts=analysis.get("correct_option_texts", []),
+            confidence=analysis.get("confidence_score", 1.0)
+        )
 
         exec_mode = self.config.get("execution_mode", "auto_click_answer_only")
 

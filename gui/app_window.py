@@ -273,6 +273,19 @@ class VisionQuizApp(ctk.CTk):
         )
         self.btn_stop.grid(row=1, column=1, padx=4, pady=4, sticky="ew")
 
+        # Export Notary Report Button
+        self.btn_export_notary = ctk.CTkButton(
+            self.tab_hud,
+            text="📄 Export Notary Report (.md)",
+            fg_color="#6366f1",
+            hover_color="#4f46e5",
+            height=32,
+            corner_radius=8,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            command=self._export_notary
+        )
+        self.btn_export_notary.pack(fill="x", padx=14, pady=(4, 6))
+
         # Answer Result Card
         self.answer_card = AnswerCard(self.tab_hud)
         self.answer_card.pack(fill="both", expand=True, padx=10, pady=(8, 10))
@@ -460,6 +473,19 @@ class VisionQuizApp(ctk.CTk):
             self._on_worker_status("Log Path", f"Log tersimpan di: {log_path}")
         else:
             self._on_worker_status("Log Info", "Belum ada file log yang dibuat.")
+
+    def _export_notary(self):
+        try:
+            md_path = self.worker.notary.export_markdown()
+            count = len(self.worker.notary.records)
+            self._on_worker_status("Notary Exported", f"Terekam {count} soal. Tersimpan: {os.path.basename(md_path)}")
+            if sys.platform == "win32":
+                try:
+                    os.startfile(md_path)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+        except Exception as e:
+            self._on_worker_status("Error", f"Gagal ekspor notulensi: {e}")
 
     def _on_tabs_updated(self, tabs: List[Dict[str, Any]]):
         self.after(0, lambda: self._apply_tabs_update(tabs))
