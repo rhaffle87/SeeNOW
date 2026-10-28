@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-10-28
+
+### Added
+- **Smart Question Cache:** Local LRU cache (`question_cache.json`) for instant <0.05s repeat question solving with dynamic shuffled option ID resolution, cutting token usage.
+- **Multi-Tab Selector HUD:** Dropdown menu and refresh trigger in GUI to explicitly lock onto specific target tabs across multi-tab browser sessions.
+- **Rotating File Logger:** JSON-structured logs in `logs/seenow.log` (2MB rotating, 3 backups) with automatic secret masking (`sk-****`) and session log view helper.
+- **Multi-OS Standalone Release Matrix:** Automated cross-platform packaging for Windows (`.zip`), Linux (`.tar.gz`), and macOS (`.zip`) with cryptographically verified `SHA256SUMS.txt`.
+
 ## [1.0.1] - 2026-10-28
 
 ### Added

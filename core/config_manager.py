@@ -27,7 +27,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "always_on_top": True,
     "prevent_blur_detection": True,
     "request_timeout_sec": 25,
-    "max_retries": 2
+    "max_retries": 2,
+    "enable_question_cache": True
 }
 
 def mask_secret(secret: str) -> str:

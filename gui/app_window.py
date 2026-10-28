@@ -1,8 +1,10 @@
 # gui/app_window.py
+import os
+import sys
 import logging
 import customtkinter as ctk
-from typing import Dict, Any
-from core.config_manager import ConfigManager, validate_url
+from typing import Dict, Any, List
+from core.config_manager import ConfigManager, validate_url, get_base_dir
 from core.agent_worker import AgentWorker
 from gui.components import StatusBadge, AnswerCard
 
@@ -29,6 +31,7 @@ class VisionQuizApp(ctk.CTk):
     def __init__(self, config_manager: ConfigManager):
         super().__init__()
         self.config = config_manager
+        self.open_tabs_list: List[Dict[str, Any]] = []
 
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
@@ -42,7 +45,8 @@ class VisionQuizApp(ctk.CTk):
         self.worker = AgentWorker(
             config_manager=self.config,
             status_callback=self._on_worker_status,
-            result_callback=self._on_worker_result
+            result_callback=self._on_worker_result,
+            tabs_callback=self._on_tabs_updated
         )
         self.worker.start()
 
@@ -71,7 +75,7 @@ class VisionQuizApp(ctk.CTk):
 
         lbl_ver = ctk.CTkLabel(
             brand_container,
-            text="v1.0.1",
+            text="v1.1.0",
             font=ctk.CTkFont(size=10, weight="bold"),
             text_color="#38bdf8",
             fg_color="#0369a1",
@@ -140,7 +144,45 @@ class VisionQuizApp(ctk.CTk):
             corner_radius=8,
             command=self._launch_chrome
         )
-        self.btn_launch_chrome.pack(fill="x", padx=10, pady=(8, 10))
+        self.btn_launch_chrome.pack(fill="x", padx=10, pady=(8, 6))
+
+        # Target Tab Bar (Selector & Refresh)
+        self.tab_select_container = ctk.CTkFrame(self.tab_hud, fg_color="#111827", corner_radius=8, border_width=1, border_color="#1f2937")
+        self.tab_select_container.pack(fill="x", padx=10, pady=(0, 10))
+
+        lbl_tab_title = ctk.CTkLabel(
+            self.tab_select_container,
+            text="TARGET TAB:",
+            font=ctk.CTkFont(size=10, weight="bold"),
+            text_color="#94a3b8"
+        )
+        lbl_tab_title.pack(side="left", padx=(10, 6), pady=6)
+
+        self.tab_menu_var = ctk.StringVar(value="[No Tab Connected]")
+        self.tab_menu = ctk.CTkOptionMenu(
+            self.tab_select_container,
+            variable=self.tab_menu_var,
+            values=["[No Tab Connected]"],
+            font=ctk.CTkFont(size=11),
+            fg_color="#1e293b",
+            button_color="#334155",
+            button_hover_color="#475569",
+            height=28,
+            command=self._on_tab_selected
+        )
+        self.tab_menu.pack(side="left", fill="x", expand=True, padx=(0, 6), pady=6)
+
+        self.btn_refresh_tabs = ctk.CTkButton(
+            self.tab_select_container,
+            text="🔄",
+            width=32,
+            height=28,
+            font=ctk.CTkFont(size=12),
+            fg_color="#334155",
+            hover_color="#475569",
+            command=self._refresh_tabs
+        )
+        self.btn_refresh_tabs.pack(side="right", padx=(0, 8), pady=6)
 
         # Mode Selector Container
         mode_container = ctk.CTkFrame(self.tab_hud, fg_color="#111827", corner_radius=8, border_width=1, border_color="#1f2937")
@@ -303,9 +345,21 @@ class VisionQuizApp(ctk.CTk):
             self.switch_antiblur.select()
         self.switch_antiblur.pack(anchor="w", pady=4)
 
-        # Save Button
-        self.btn_save = ctk.CTkButton(
+        self.switch_cache = ctk.CTkSwitch(
             container,
+            text="Enable Smart Question Cache (Zero-latency repeat solve)",
+            font=ctk.CTkFont(size=11)
+        )
+        if self.config.get("enable_question_cache", True):
+            self.switch_cache.select()
+        self.switch_cache.pack(anchor="w", pady=4)
+
+        # Action Buttons Container (Save & Export)
+        btn_action_box = ctk.CTkFrame(container, fg_color="transparent")
+        btn_action_box.pack(fill="x", pady=(18, 10))
+
+        self.btn_save = ctk.CTkButton(
+            btn_action_box,
             text="💾 Save Settings",
             font=ctk.CTkFont(size=13, weight="bold"),
             fg_color="#059669",
@@ -314,7 +368,19 @@ class VisionQuizApp(ctk.CTk):
             corner_radius=8,
             command=self._save_settings
         )
-        self.btn_save.pack(fill="x", pady=(18, 10))
+        self.btn_save.pack(side="left", fill="x", expand=True, padx=(0, 6))
+
+        self.btn_export_log = ctk.CTkButton(
+            btn_action_box,
+            text="📄 View Logs",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color="#334155",
+            hover_color="#475569",
+            height=36,
+            corner_radius=8,
+            command=self._export_log
+        )
+        self.btn_export_log.pack(side="right", padx=(6, 0))
 
     def _on_topmost_toggle(self):
         is_top = bool(self.cb_topmost.get())
@@ -372,7 +438,8 @@ class VisionQuizApp(ctk.CTk):
             "browser_cdp_url": self.entry_cdp.get().strip(),
             "action_delay": round(self.slider_delay.get(), 2),
             "auto_submit_final": bool(self.switch_submit.get()),
-            "prevent_blur_detection": bool(self.switch_antiblur.get())
+            "prevent_blur_detection": bool(self.switch_antiblur.get()),
+            "enable_question_cache": bool(self.switch_cache.get())
         }
         try:
             self.config.save(new_data)
@@ -380,6 +447,56 @@ class VisionQuizApp(ctk.CTk):
             self._on_worker_status("Saved", "Pengaturan berhasil disimpan.")
         except Exception as e:
             self._on_worker_status("Error", f"Gagal simpan: {e}")
+
+    def _export_log(self):
+        log_path = os.path.join(get_base_dir(), "logs", "seenow.log")
+        if os.path.isfile(log_path):
+            if sys.platform == "win32":
+                try:
+                    os.startfile(log_path)  # type: ignore[attr-defined]
+                    return
+                except Exception:
+                    pass
+            self._on_worker_status("Log Path", f"Log tersimpan di: {log_path}")
+        else:
+            self._on_worker_status("Log Info", "Belum ada file log yang dibuat.")
+
+    def _on_tabs_updated(self, tabs: List[Dict[str, Any]]):
+        self.after(0, lambda: self._apply_tabs_update(tabs))
+
+    def _apply_tabs_update(self, tabs: List[Dict[str, Any]]):
+        self.open_tabs_list = tabs
+        if not tabs:
+            self.tab_menu.configure(values=["[No Tab Connected]"])
+            self.tab_menu_var.set("[No Tab Connected]")
+            return
+
+        titles = []
+        active_title = None
+        for t in tabs:
+            display = f"#{t['index']} {t['title']}"
+            titles.append(display)
+            if t.get("is_active"):
+                active_title = display
+
+        self.tab_menu.configure(values=titles)
+        if active_title:
+            self.tab_menu_var.set(active_title)
+        elif titles:
+            self.tab_menu_var.set(titles[0])
+
+    def _on_tab_selected(self, choice: str):
+        if not self.open_tabs_list or choice == "[No Tab Connected]":
+            return
+        try:
+            idx_str = choice.split()[0].replace("#", "")
+            idx = int(idx_str)
+            self.worker.dispatch("select_tab", idx)
+        except Exception:
+            pass
+
+    def _refresh_tabs(self):
+        self.worker.dispatch("list_tabs")
 
     def _setup_hotkeys(self):
         if not keyboard:

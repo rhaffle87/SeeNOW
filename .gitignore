@@ -26,6 +26,8 @@ htmlcov/
 .env
 config.json
 chrome_profile/
+logs/
+question_cache.json
 
 # OS-specific
 Thumbs.db

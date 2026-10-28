@@ -109,7 +109,13 @@ class BrowserEngine:
 
         pages = self.context.pages
         if pages:
-            self.page = pages[0]
+            best = pages[0]
+            for p in pages:
+                url = p.url.lower()
+                if not url.startswith("chrome://") and not url.startswith("about:blank") and not url.startswith("edge://"):
+                    best = p
+                    break
+            self.page = best
         else:
             self.page = await self.context.new_page()
 
@@ -117,6 +123,45 @@ class BrowserEngine:
             await self.apply_anti_blur_stealth(self.page)
 
         return self.page
+
+    async def list_open_tabs(self) -> List[Dict[str, Any]]:
+        if not self.context:
+            return []
+        result = []
+        for i, p in enumerate(self.context.pages):
+            if p.is_closed():
+                continue
+            try:
+                title = await p.title()
+            except Exception:
+                title = "Untitled Tab"
+            url = p.url
+            result.append({
+                "index": i,
+                "title": title[:35] if title else "Untitled",
+                "url": url,
+                "is_active": (p == self.page)
+            })
+        return result
+
+    async def select_tab(self, index: int) -> bool:
+        if not self.context:
+            return False
+        pages = self.context.pages
+        if 0 <= index < len(pages):
+            target_page = pages[index]
+            if not target_page.is_closed():
+                self.page = target_page
+                self.active_frame = self.page
+                try:
+                    await self.page.bring_to_front()
+                except Exception:
+                    pass
+                if self.config and self.config.get("prevent_blur_detection", True):
+                    await self.apply_anti_blur_stealth(self.page)
+                logger.info(f"Berhasil mengunci agen ke tab #{index}: {target_page.url}")
+                return True
+        return False
 
     async def is_connection_alive(self) -> bool:
         if not self.browser:

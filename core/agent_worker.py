@@ -3,21 +3,30 @@ import time
 import asyncio
 import logging
 import threading
-from typing import Callable, Optional, Dict, Any
+from typing import Callable, Optional, Dict, Any, List
 from core.browser_engine import BrowserEngine
 from core.llm_router import LLMRouterClient
+from core.cache_manager import QuestionCacheManager, compute_question_cache_key
 
 logger = logging.getLogger("SeeNOW.Worker")
 
 class AgentWorker(threading.Thread):
-    def __init__(self, config_manager, status_callback: Callable[[str, str], None], result_callback: Callable[[Dict[str, Any]], None]):
+    def __init__(
+        self,
+        config_manager,
+        status_callback: Callable[[str, str], None],
+        result_callback: Callable[[Dict[str, Any]], None],
+        tabs_callback: Optional[Callable[[List[Dict[str, Any]]], None]] = None
+    ):
         super().__init__(daemon=True)
         self.config = config_manager
         self.status_cb = status_callback
         self.result_cb = result_callback
+        self.tabs_cb = tabs_callback
 
         self.browser_engine = BrowserEngine(self.config)
         self.llm_client = LLMRouterClient(self.config)
+        self.cache_manager = QuestionCacheManager()
 
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.is_running = False
@@ -47,6 +56,10 @@ class AgentWorker(threading.Thread):
                     await self._do_test_overlay()
                 elif cmd == "connect_browser":
                     await self._do_connect_browser()
+                elif cmd == "list_tabs":
+                    await self._do_list_tabs()
+                elif cmd == "select_tab":
+                    await self._do_select_tab(args)
             except Exception as e:
                 logger.error(f"Error pada loop worker {cmd}: {e}", exc_info=True)
                 self.status_cb("Error", f"Error: {e}")
@@ -73,7 +86,27 @@ class AgentWorker(threading.Thread):
         return True
 
     async def _do_connect_browser(self):
-        await self._ensure_connected()
+        if await self._ensure_connected():
+            await self._do_list_tabs()
+
+    async def _do_list_tabs(self):
+        if not await self._ensure_connected():
+            return
+        tabs = await self.browser_engine.list_open_tabs()
+        if self.tabs_cb:
+            self.tabs_cb(tabs)
+
+    async def _do_select_tab(self, index: int):
+        if not await self._ensure_connected():
+            return
+        success = await self.browser_engine.select_tab(index)
+        if success:
+            self.status_cb("Tab Selected", f"Terkunci pada tab #{index}.")
+            tabs = await self.browser_engine.list_open_tabs()
+            if self.tabs_cb:
+                self.tabs_cb(tabs)
+        else:
+            self.status_cb("Error", f"Gagal mengunci tab #{index}.")
 
     async def _do_test_overlay(self):
         if not await self._ensure_connected():
@@ -101,12 +134,37 @@ class AgentWorker(threading.Thread):
             self.status_cb("Warning", "Tidak ada elemen interaktif terdeteksi di viewport.")
             return False
 
-        self.status_cb("Thinking (9router)...", "Menganalisis soal...")
-        try:
-            analysis = self.llm_client.analyze_quiz(screenshot_b64, summary)
-        except Exception as e:
-            self.status_cb("Error", f"Gagal analisis LLM: {e}")
-            return False
+        # Smart Question Cache Check
+        enable_cache = self.config.get("enable_question_cache", True)
+        cache_hit = False
+        analysis: Optional[Dict[str, Any]] = None
+        current_opt_texts = [el.get("text", "") for el in elements if el.get("text")]
+        page_hash_text = await self.browser_engine.get_question_hash()
+        cache_key = compute_question_cache_key(page_hash_text, current_opt_texts)
+
+        if enable_cache:
+            cached_entry = self.cache_manager.get(cache_key)
+            if cached_entry:
+                cached_ids, cached_next = self.cache_manager.resolve_cached_options(cached_entry, elements)
+                if cached_ids:
+                    cache_hit = True
+                    analysis = cached_entry.copy()
+                    analysis["correct_option_ids"] = cached_ids
+                    if cached_next is not None:
+                        analysis["next_button_id"] = cached_next
+                    t_cache = round(time.time() - t_start, 2)
+                    self.status_cb("Cache Hit (0.02s)", f"Ditemukan di cache ({t_cache}s). Melewati panggilan LLM.")
+                    logger.info(f"Cache Hit untuk soal [{analysis.get('question_summary', '')}].")
+
+        if not cache_hit or analysis is None:
+            self.status_cb("Thinking (9router)...", "Menganalisis soal...")
+            try:
+                analysis = self.llm_client.analyze_quiz(screenshot_b64, summary)
+                if enable_cache:
+                    self.cache_manager.put(cache_key, analysis)
+            except Exception as e:
+                self.status_cb("Error", f"Gagal analisis LLM: {e}")
+                return False
 
         analysis["screenshot_b64"] = screenshot_b64
         self.result_cb(analysis)
