@@ -48,21 +48,34 @@ seenow/
 │   └── pull_request_template.md
 ├── core/
 │   ├── __init__.py
-│   ├── config_manager.py        # Centralized config loader with URL validation & secret masking
-│   ├── som_injector.js          # Injected JavaScript Set-of-Marks labeling engine
+│   ├── agent_worker.py          # Background worker thread with anti-skip state transition checks
 │   ├── browser_engine.py        # Playwright CDP lifecycle, frame locator, image resizing
+│   ├── cache_manager.py         # Sub-20ms Question LRU cache with order-invariant matching
+│   ├── config_manager.py        # Centralized config loader with URL validation & secret masking
+│   ├── llm_router.py            # 9router client with persistent HTTP connection pooling
+│   ├── logger_setup.py          # Structured JSON logging system
 │   ├── os_screen_engine.py      # MSS + PyAutoGUI fallback engine
-│   ├── llm_router.py            # 9router client with robust regex JSON parser
-│   └── agent_worker.py          # Background worker thread with anti-skip state transition checks
+│   ├── quiz_notary.py           # Automated markdown session notary and evidence exporter
+│   └── som_injector.js          # Injected JavaScript Set-of-Marks labeling engine
 ├── gui/
 │   ├── __init__.py
 │   ├── app_window.py            # Main CustomTkinter HUD window and Settings panel
 │   └── components.py            # StatusBadge, MetricPill, and AnswerCard components
+├── docs/
+│   ├── README.md                # Comprehensive documentation index
+│   ├── hcia-cloud-computing/    # HCIA-Cloud Computing V5.5 Master Handbook & 14 Modules
+│   ├── general-knowledge-of-cloud-computing/ # General Knowledge Master Handbook & 7 Modules
+│   └── development-and-basic-concepts-of-cloud-computing/ # Development & Concepts Master Guide
 ├── tests/
 │   ├── __init__.py
+│   ├── test_browser_engine.py   # CDP connection and frame locator tests
+│   ├── test_cache_manager.py    # LRU caching and hash key tests
 │   ├── test_config.py           # Configuration and URL validation tests
+│   ├── test_gui_components.py   # UI custom widgets tests
 │   ├── test_json_parser.py      # Resilient JSON extraction tests
-│   └── test_schema.py           # Output Pydantic schema validation tests
+│   ├── test_notary.py           # Session logger tests
+│   ├── test_schema.py           # Output Pydantic schema validation tests
+│   └── test_worker.py           # Agent worker orchestration tests
 ├── .env.example
 ├── .gitignore
 ├── config.json.example

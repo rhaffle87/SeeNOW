@@ -18,16 +18,16 @@ DEFAULT_CONFIG_PATH = os.path.join(get_base_dir(), "config.json")
 DEFAULT_CONFIG: Dict[str, Any] = {
     "router_base_url": os.getenv("ROUTER_BASE_URL", "http://localhost:20128/v1"),
     "router_api_key": os.getenv("ROUTER_API_KEY", ""),
-    "primary_vision_model": os.getenv("PRIMARY_VISION_MODEL", "ag/gemini-3.8-flash-low"),
-    "fallback_vision_model": os.getenv("FALLBACK_VISION_MODEL", "ag/gemini-2.5-flash"),
+    "primary_vision_model": os.getenv("PRIMARY_VISION_MODEL", "ag/gemini-3.8-flash-high"),
+    "fallback_vision_model": os.getenv("FALLBACK_VISION_MODEL", "ag/gemini-3.8-flash-low"),
     "browser_cdp_url": os.getenv("BROWSER_CDP_URL", "http://localhost:9222"),
     "execution_mode": "auto_click_answer_only",
-    "action_delay": 1.0,
+    "action_delay": 0.3,
     "auto_submit_final": False,
     "always_on_top": True,
     "prevent_blur_detection": True,
-    "request_timeout_sec": 25,
-    "max_retries": 2,
+    "request_timeout_sec": 45,
+    "max_retries": 3,
     "enable_question_cache": True
 }
 

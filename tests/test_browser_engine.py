@@ -117,3 +117,32 @@ def test_ensure_browser_running_reuses_active_endpoint():
             assert "9222" in res
 
     asyncio.run(run())
+
+def test_check_question_status_anti_false_positive():
+    async def run():
+        engine = BrowserEngine()
+        engine.page = MagicMock()
+        target = MagicMock()
+        engine.active_frame = target
+
+        # 1. False positive check: same question number (16 -> 16) must be changed=False
+        target.evaluate = AsyncMock(return_value={"current": 16, "total": 20, "text": "Question 16 text"})
+        status_same = await engine.check_question_status(pre_num=16, pre_hash="any_hash")
+        assert status_same["changed"] is False
+        assert status_same["current"] == 16
+
+        # 2. Advance check: question number increased (15 -> 16) must be changed=True
+        status_advanced = await engine.check_question_status(pre_num=15, pre_hash="any_hash")
+        assert status_advanced["changed"] is True
+        assert status_advanced["current"] == 16
+
+        # 3. None current check: fallback to hash comparison
+        target.evaluate = AsyncMock(return_value={"current": None, "total": None, "text": "Question text"})
+        h = await engine.get_question_hash()
+        status_hash_same = await engine.check_question_status(pre_num=None, pre_hash=h)
+        assert status_hash_same["changed"] is False
+
+        status_hash_diff = await engine.check_question_status(pre_num=None, pre_hash="different_hash")
+        assert status_hash_diff["changed"] is True
+
+    asyncio.run(run())

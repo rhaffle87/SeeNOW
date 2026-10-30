@@ -20,6 +20,10 @@ def resource_path(relative_path: str) -> str:
     base_path = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     return os.path.join(base_path, relative_path)
 
+def format_endpoint_url(host: str, port: int) -> str:
+    h = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    return f"http://{h}:{port}"
+
 def parse_host_port(cdp_url: str) -> Tuple[str, int]:
     try:
         parsed = urlparse(cdp_url)
@@ -137,7 +141,7 @@ class BrowserEngine:
         # 1. Cek apakah endpoint sudah siap di host:port
         if is_cdp_endpoint_ready(port, host):
             logger.info(f"Endpoint browser CDP aktif di {host}:{port}")
-            return f"http://{host}:{port}"
+            return format_endpoint_url(host, port)
 
         # 2. Coba luncurkan browser di port utama
         logger.info(f"Port {port} belum merespons. Meluncurkan browser otomatis...")
@@ -146,14 +150,14 @@ class BrowserEngine:
                 await asyncio.sleep(0.25)
                 if is_cdp_endpoint_ready(port, host):
                     logger.info(f"Browser siap di {host}:{port}")
-                    return f"http://{host}:{port}"
+                    return format_endpoint_url(host, port)
 
         # 3. Fallback Port Discovery (9223, 9224) jika port 9222 macet atau bentrok
         candidates = [9223, 9224] if port == 9222 else [9222, 9223]
         for f_port in candidates:
             if is_cdp_endpoint_ready(f_port, host):
                 logger.info(f"Ditemukan browser aktif di fallback port {f_port}")
-                new_url = f"http://{host}:{f_port}"
+                new_url = format_endpoint_url(host, f_port)
                 if self.config:
                     self.config.set("browser_cdp_url", new_url)
                 return new_url
@@ -164,7 +168,7 @@ class BrowserEngine:
                     await asyncio.sleep(0.25)
                     if is_cdp_endpoint_ready(f_port, host):
                         logger.info(f"Browser siap di fallback port {f_port}")
-                        new_url = f"http://{host}:{f_port}"
+                        new_url = format_endpoint_url(host, f_port)
                         if self.config:
                             self.config.set("browser_cdp_url", new_url)
                         return new_url
@@ -365,6 +369,29 @@ class BrowserEngine:
                         a.target = '_self';
                     }
                 }, true);
+
+                // 7. Bypass anti-copy & text-selection locks (user-select: none, oncopy, onselectstart)
+                try {
+                    if (!document.getElementById('seenow-unlock-select')) {
+                        const unlockStyle = document.createElement('style');
+                        unlockStyle.id = 'seenow-unlock-select';
+                        unlockStyle.innerHTML = `
+                            *, *:before, *:after {
+                                -webkit-user-select: text !important;
+                                -moz-user-select: text !important;
+                                -ms-user-select: text !important;
+                                user-select: text !important;
+                            }
+                        `;
+                        (document.head || document.documentElement).appendChild(unlockStyle);
+                    }
+                } catch(e) {}
+
+                const unlockEvents = ['copy', 'cut', 'selectstart', 'contextmenu', 'dragstart'];
+                unlockEvents.forEach(evt => {
+                    window.addEventListener(evt, e => e.stopImmediatePropagation(), true);
+                    document.addEventListener(evt, e => e.stopImmediatePropagation(), true);
+                });
             } catch(err) {}
         })();
         """
@@ -420,7 +447,7 @@ class BrowserEngine:
         for f in frames:
             try:
                 count = await f.evaluate("""
-                    () => document.querySelectorAll('input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"], .option').length
+                    () => document.querySelectorAll('input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"], .option, .option-list-item, .quiz-option, .choice-item').length
                 """)
                 if count > max_inputs:
                     max_inputs = count
@@ -439,75 +466,67 @@ class BrowserEngine:
         if not target:
             raise RuntimeError("Tidak dapat menemukan frame kuis.")
 
+        # Single roundtrip: inject script + execute injectSoM atomically & decode any diagram images
         try:
-            await target.evaluate(self.som_script)
-            elements = await target.evaluate("window.injectSoM()")
+            elements = await target.evaluate(f"""
+                {self.som_script}
+                // Pastikan gambar topologi/diagram kuis selesai di-render
+                try {{
+                    const imgs = Array.from(document.images || []);
+                    for (const img of imgs) {{
+                        if (img.decode && img.complete) {{
+                            img.decode().catch(() => {{}});
+                        }}
+                    }}
+                }} catch(e) {{}}
+                window.injectSoM();
+            """)
         except Exception as e:
             logger.warning(f"Gagal menyuntikkan SoM: {e}")
             raise RuntimeError(f"Gagal menyuntikkan SoM pada halaman: {e}")
 
-        # Penanganan viewport: auto-scroll jika elemen terlalu sedikit atau tidak ada tombol navigasi
-        def has_navigation_candidate(els: List[Dict[str, Any]]) -> bool:
-            nav_keywords = ("next", "selanjutnya", "berikut", "lanjut", "submit", "kirim", "jawab", "finish", "selesai")
-            for e in els:
-                t = (e.get("text") or "").lower()
-                role = (e.get("role") or "").lower()
-                tag = (e.get("tag") or "").lower()
-                if any(kw in t for kw in nav_keywords) or role == "button" or tag == "button":
-                    return True
-            return False
-
-        if len(elements) < 2 or not has_navigation_candidate(elements):
-            try:
-                scrolled = await target.evaluate("""
-                    () => {
-                        if (document.documentElement.scrollHeight > window.innerHeight) {
-                            window.scrollBy(0, 350);
-                            return true;
-                        }
-                        return false;
-                    }
-                """)
-                if scrolled:
-                    await asyncio.sleep(0.12)
-                    await target.evaluate(self.som_script)
-                    elements = await target.evaluate("window.injectSoM()")
-            except Exception:
-                pass
-
-        # Ambil screenshot JPEG 65%
+        # Ambil screenshot JPEG 60%
         try:
-            raw_bytes = await self.page.screenshot(type="jpeg", quality=65, full_page=False)
+            raw_bytes = await self.page.screenshot(type="jpeg", quality=60, full_page=False)
         except Exception as e:
             logger.warning(f"Gagal mengambil screenshot: {e}")
             raise RuntimeError(f"Gagal mengambil screenshot halaman: {e}")
 
-        # Kompresi bandwidth cerdas: Batasi resolusi maksimal lebar 1024px agar inferensi vision kilat (<2-3 detik)
+        # Kompresi ultra-cepat: Batasi lebar maksimal 960px menggunakan Bilinear (<5ms vs 100ms Lanczos)
         try:
             with Image.open(io.BytesIO(raw_bytes)) as pil_img:
                 w, h = pil_img.size
-                if w > 1024:
-                    new_w = 1024
-                    new_h = int(h * (1024 / w))
-                    resized_img = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                if w > 960:
+                    new_w = 960
+                    new_h = int(h * (960 / w))
+                    resized_img = pil_img.resize((new_w, new_h), Image.Resampling.BILINEAR)
                     buf = io.BytesIO()
-                    resized_img.save(buf, format="JPEG", quality=65, optimize=True)
+                    resized_img.save(buf, format="JPEG", quality=60, optimize=True)
                     raw_bytes = buf.getvalue()
         except Exception:
             pass
 
         screenshot_b64 = base64.b64encode(raw_bytes).decode("utf-8")
 
-        # Hapus overlay visual saja, pertahankan data-som-id untuk locator
+        # Single roundtrip: Hapus overlay visual dan ambil teks pertanyaan DOM bersamaan
+        dom_question_text = ""
         try:
-            await target.evaluate("window.removeSoM(false)")
+            dom_question_text = await target.evaluate("""() => {
+                try { window.removeSoM(false); } catch(e) {}
+                const qEl = document.querySelector('.editor-content, .subject-desc, .subject-title, .question-title, .exam-content-title, .subject-content');
+                return qEl ? qEl.innerText.replace(/\\s+/g, ' ').trim() : '';
+            }""")
         except Exception:
             pass
 
         summary_lines = []
+        if dom_question_text:
+            summary_lines.append(f"QUESTION TEXT (FROM DOM):\n\"{dom_question_text}\"\n")
+            summary_lines.append("OPTIONS AND CONTROLS ON SCREEN:")
         for el in elements:
+            checked_tag = " [ALREADY_CHECKED]" if el.get("is_checked") else ""
             summary_lines.append(
-                f"[{el['id']}] Tag: <{el['tag']}> Type: '{el['type']}' Text: \"{el['text']}\""
+                f"[{el['id']}] Tag: <{el['tag']}> Type: '{el['type']}'{checked_tag} Text: \"{el['text']}\""
             )
         elements_summary = "\n".join(summary_lines)
 
@@ -560,6 +579,97 @@ class BrowserEngine:
 
         return False
 
+    JS_EXTRACT_QUESTION = """() => {
+        const bodyText = document.body.innerText || '';
+
+        // 1. Nomor soal & total
+        let current = null;
+        let total = null;
+        const m = bodyText.match(/Question\\s+(\\d+)\\s*\\/\\s*(\\d+)/i);
+        if (m) {
+            current = parseInt(m[1]);
+            total = parseInt(m[2]);
+        } else {
+            const m2 = bodyText.match(/\\b(\\d+)[、\\.]\\s*[A-Z]/);
+            if (m2) current = parseInt(m2[1]);
+        }
+
+        // 2. Teks stem pertanyaan
+        // Prioritas 1: Selector kelas pertanyaan spesifik
+        const stemSelectors = [
+            '.subject-desc', '.question-stem', '.subject-stem',
+            '.question-title', '.subject_content', '.subject-item-title',
+            '.exam-question-title', '.title-box', '.q-title', '.stem',
+            '.question-box .title', '.subject-item .title', '.exam-subject-title'
+        ];
+        for (const sel of stemSelectors) {
+            const el = document.querySelector(sel);
+            if (el && (el.innerText || '').trim().length >= 8) {
+                return { current, total, text: (el.innerText || '').trim().replace(/\\s+/g, ' ') };
+            }
+        }
+
+        // Prioritas 2: Cari elemen teks sebelum opsi pertama kuis
+        const firstOpt = document.querySelector(
+            '.kltCourse-radio-wrapper, .kltCourse-checkbox-wrapper, .option-list-item, .quiz-option, .choice-item, label.el-radio, label.el-checkbox, [role="radio"], [role="checkbox"]'
+        );
+        if (firstOpt) {
+            let p = firstOpt.parentElement;
+            while (p && p !== document.body) {
+                for (let i = 0; i < p.children.length; i++) {
+                    const child = p.children[i];
+                    if (child.contains(firstOpt)) break;
+                    const txt = (child.innerText || '').trim().replace(/\\s+/g, ' ');
+                    if (txt.length >= 8 && !/^(Remaining|Time|Score|Answered|Skor|Waktu)/i.test(txt)) {
+                        return { current, total, text: txt };
+                    }
+                }
+                p = p.parentElement;
+            }
+        }
+
+        // Prioritas 3: Regex berbasis teks pertanyaan di body (menangkap 'Question X / Y ... [soal] ...')
+        const qMatch = bodyText.match(/(?:Question\\s+\\d+\\s*\\/\\s*\\d+|\\b\\d+[、\\.]\\s*[A-Z])[\\s\\S]{10,600}/i);
+        if (qMatch) {
+            const cleaned = qMatch[0]
+                .replace(/\\b\\d{1,2}:\\d{2}(:\\d{2})?\\b/g, '')
+                .replace(/\\b(Answered|Score|Time|Remaining|Terjawab|Skor|Waktu)\\s*[:：]?\\s*\\d+(\\/\\d+)?/gi, '')
+                .replace(/\\b(Saved|Saving|Tersimpan|Menyimpan)\\b/gi, '')
+                .replace(/\\s+/g, ' ')
+                .trim();
+            return { current, total, text: cleaned };
+        }
+
+        // Prioritas 4: Container umum jika ada
+        const qContainer = document.querySelector('.subject-item, .question-item, .exam-subject, .exam-question, .subject-box, .test-paper, #questionContainer');
+        if (qContainer && (qContainer.innerText || '').trim().length >= 15) {
+            const cleaned = (qContainer.innerText || '')
+                .replace(/\\b\\d{1,2}:\\d{2}(:\\d{2})?\\b/g, '')
+                .replace(/\\b(Answered|Score|Time|Remaining|Terjawab|Skor|Waktu)\\s*[:：]?\\s*\\d+(\\/\\d+)?/gi, '')
+                .replace(/\\s+/g, ' ')
+                .trim();
+            return { current, total, text: cleaned.slice(0, 500) };
+        }
+
+        return { current, total, text: "" };
+    }"""
+
+    async def get_question_info(self) -> Dict[str, Any]:
+        if not self.page:
+            return {"current": None, "total": None, "text": ""}
+        try:
+            target = self.active_frame or await self.find_best_quiz_frame()
+            if not target:
+                return {"current": None, "total": None, "text": ""}
+            res = await target.evaluate(self.JS_EXTRACT_QUESTION)
+            return {
+                "current": res.get("current"),
+                "total": res.get("total"),
+                "text": res.get("text", "")
+            }
+        except Exception:
+            return {"current": None, "total": None, "text": ""}
+
     async def get_question_hash(self) -> str:
         if not self.page:
             return ""
@@ -567,10 +677,51 @@ class BrowserEngine:
             target = self.active_frame or await self.find_best_quiz_frame()
             if not target:
                 return ""
-            text = await target.evaluate("() => (document.body.innerText || '').replace(/\\s+/g, ' ')")
-            return hashlib.sha256(text[:1000].encode("utf-8")).hexdigest()
+            res = await target.evaluate(self.JS_EXTRACT_QUESTION)
+            cur_num = res.get("current")
+            text = res.get("text", "")
+            ident = f"Q{cur_num}_{text}" if cur_num is not None else text
+            return hashlib.sha256(ident.encode("utf-8")).hexdigest() if ident else ""
         except Exception:
             return ""
+
+    async def check_question_status(self, pre_num: Optional[int], pre_hash: str) -> Dict[str, Any]:
+        """
+        Pemeriksaan status perubahan soal dalam 1 roundtrip evaluate yang super cepat (<10ms).
+        Menggunakan logika ekstraksi identik dengan get_question_hash() untuk mencegah false positive.
+        """
+        if not self.page:
+            return {"changed": False, "current": pre_num, "hash": pre_hash}
+        try:
+            target = self.active_frame or await self.find_best_quiz_frame()
+            if not target:
+                return {"changed": False, "current": pre_num, "hash": pre_hash}
+
+            res = await target.evaluate(self.JS_EXTRACT_QUESTION)
+            cur_num = res.get("current")
+            text = res.get("text", "")
+            ident = f"Q{cur_num}_{text}" if cur_num is not None else text
+            cur_hash = hashlib.sha256(ident.encode("utf-8")).hexdigest() if ident else ""
+
+            # Evaluasi perubahan soal secara presisi dan anti-false-positive:
+            if cur_num is not None and pre_num is not None:
+                # Jika kedua nomor soal terdeteksi:
+                # HANYA nomor soal yang bertambah (cur_num > pre_num) yang valid sebagai perpindahan soal!
+                # cur_num == pre_num (#16 -> #16) adalah false positive dan DITOLAK!
+                changed = bool(cur_num > pre_num)
+            elif pre_hash and cur_hash:
+                # Jika nomor soal tidak tersedia di DOM, gunakan sidik jari hash teks pertanyaan
+                changed = bool(cur_hash != pre_hash)
+            else:
+                changed = False
+
+            return {
+                "changed": changed,
+                "current": cur_num,
+                "hash": cur_hash
+            }
+        except Exception:
+            return {"changed": False, "current": pre_num, "hash": pre_hash}
 
     async def close(self):
         if self.context:

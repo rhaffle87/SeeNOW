@@ -210,7 +210,7 @@ class AgentWorker(threading.Thread):
         if not cache_hit or analysis is None:
             self.status_cb("Thinking (9router)...", "Menganalisis soal...")
             try:
-                analysis = self.llm_client.analyze_quiz(screenshot_b64, summary)
+                analysis = self.llm_client.analyze_quiz(screenshot_b64, summary, elements=elements)
                 if enable_cache:
                     self.cache_manager.put(cache_key, analysis)
             except Exception as e:
@@ -239,69 +239,171 @@ class AgentWorker(threading.Thread):
             self.status_cb("Idle", f"Selesai dalam {duration}s (Read-Only).")
             return not analysis.get("is_final_submit", False)
 
-        # Klik opsi jawaban
-        correct_ids = analysis.get("correct_option_ids", [])
-        if correct_ids:
-            self.status_cb("Clicking...", f"Memilih opsi ID: {correct_ids}")
-            for opt_id in correct_ids:
-                await self.browser_engine.click_element(opt_id, elements, delay=0.06)
-        else:
-            # Jika tidak ada opsi terpilih dan di layar tidak ada pilihan ganda (misal tab pengantar)
-            has_options = any(
-                el.get("tag") == "input" or el.get("role") in ("radio", "checkbox") or "option" in el.get("text", "").lower()
-                for el in elements
-            )
-            if not has_options:
-                self.status_cb("Non-Quiz Tab", "Bukan halaman soal. Beralih ke tab lembar ujian.")
-                logger.warning("Tidak ada elemen pilihan ganda di tab ini. Auto-loop dijeda agar tidak salah klik.")
+        # 1. Catat informasi nomor soal dan sidik jari sebelum aksi
+        q_info = await self.browser_engine.get_question_info()
+        cur_num = q_info.get("current")
+        total_num = q_info.get("total")
+        pre_answer_hash = await self.browser_engine.get_question_hash()
+
+        # Deteksi apakah ini soal terakhir dari DOM atau analisis LLM
+        is_final = analysis.get("is_final_submit", False) or bool(cur_num and total_num and cur_num >= total_num)
+        raw_next_id = analysis.get("next_button_id")
+
+        # Validasi bahwa tombol next yang dipilih adalah tombol maju (BUKAN prev / return)
+        def is_forward_button(el_id: Optional[int]) -> bool:
+            if el_id is None:
                 return False
+            el = next((e for e in elements if e["id"] == el_id), None)
+            if not el:
+                return False
+            t = (el.get("text") or "").lower()
+            if any(bw in t for bw in ("prev", "previous", "kembali", "sebelumnya", "back", "return")):
+                return False
+            return True
 
-        is_final = analysis.get("is_final_submit", False)
-        next_id = analysis.get("next_button_id")
+        next_id = raw_next_id if is_forward_button(raw_next_id) else None
+        if next_id is None:
+            fwd_el = next((el for el in elements if (el.get("text") or "").strip().lower() in ("next", "selanjutnya", "lanjut")), None)
+            if fwd_el:
+                next_id = fwd_el["id"]
 
-        if is_final or (next_id is None):
+        # 2. Periksa status tercentang (Pre-Checked / Already-Filled) pada elemen saat ini
+        desired_ids = analysis.get("correct_option_ids", [])
+        q_type = analysis.get("question_type", "single_choice")
+        currently_checked_ids = [el["id"] for el in elements if el.get("is_checked", False)]
+
+        # Validasi apakah jawaban yang ada di layar sudah 100% benar
+        already_correct = False
+        if desired_ids:
+            if q_type in ("single_choice", "true_false"):
+                # Pada radio button, jika salah satu yang tercentang sama dengan target jawaban
+                if any(cid in desired_ids for cid in currently_checked_ids):
+                    already_correct = True
+                    logger.info(f"Pre-check Valid: Soal #{cur_num or '?'} radio [{currently_checked_ids}] sudah benar ({desired_ids}). Melewati klik opsi.")
+                    self.status_cb("Verified", f"Soal #{cur_num or '?'} sudah terisi benar.")
+            else:
+                # Pada multi-choice, himpunan opsi tercentang harus 100% sama dengan target
+                if set(currently_checked_ids) == set(desired_ids):
+                    already_correct = True
+                    logger.info(f"Pre-check Valid: Soal #{cur_num or '?'} multi-choice [{currently_checked_ids}] sudah 100% cocok. Melewati klik opsi.")
+                    self.status_cb("Verified", f"Soal #{cur_num or '?'} opsi [{desired_ids}] sudah terisi benar.")
+
+        # 3. Rekonsiliasi & Eksekusi Opsi jika belum benar
+        action_performed = False
+        if not already_correct:
+            if desired_ids:
+                if q_type == "multi_choice":
+                    # Multi-answer (checkbox):
+                    # - Uncheck opsi salah yang tercentang
+                    wrong_checked = set(currently_checked_ids) - set(desired_ids)
+                    for opt_id in wrong_checked:
+                        logger.info(f"Membatalkan centang opsi yang salah [{opt_id}]...")
+                        await self.browser_engine.click_element(opt_id, elements, delay=0.08)
+                        action_performed = True
+
+                    # - Check opsi benar yang belum tercentang
+                    missing_options = set(desired_ids) - set(currently_checked_ids)
+                    for opt_id in missing_options:
+                        logger.info(f"Mencentang opsi yang benar [{opt_id}]...")
+                        await self.browser_engine.click_element(opt_id, elements, delay=0.08)
+                        action_performed = True
+                else:
+                    # Single-choice atau True/False (radio): Cukup klik opsi yang benar
+                    self.status_cb("Clicking...", f"Memilih opsi ID: {desired_ids}")
+                    for opt_id in desired_ids:
+                        await self.browser_engine.click_element(opt_id, elements, delay=0.06)
+                        action_performed = True
+            else:
+                # Jika tidak ada opsi terpilih dan tidak ada elemen interaktif pilihan ganda
+                has_options = any(
+                    el.get("tag") == "input" or el.get("role") in ("radio", "checkbox") or "option" in el.get("text", "").lower()
+                    for el in elements
+                )
+                if not has_options:
+                    self.status_cb("Non-Quiz Tab", "Bukan halaman soal. Beralih ke tab lembar ujian.")
+                    logger.warning("Tidak ada elemen pilihan ganda di tab ini. Auto-loop dijeda agar tidak salah klik.")
+                    return False
+
+        duration = round(time.time() - t_start, 2)
+
+        # 4. KASUS KHUSUS SOAL TERAKHIR (Submit Page)
+        if is_final:
+            if action_performed:
+                await asyncio.sleep(0.3)
+
             auto_submit = self.config.get("auto_submit_final", False)
-            if auto_submit and next_id:
-                await self.browser_engine.click_element(next_id, elements, delay=0.1)
+            submit_target_id = raw_next_id if raw_next_id and is_forward_button(raw_next_id) else None
+            if not submit_target_id:
+                submit_el = next((el for el in elements if any(w in (el.get("text") or "").lower() for w in ("submit", "kirim", "finish", "selesai"))), None)
+                if submit_el:
+                    submit_target_id = submit_el["id"]
+
+            if auto_submit and submit_target_id:
+                logger.info(f"Soal terakhir #{cur_num or 'Final'}: Mengklik tombol submit [{submit_target_id}]...")
+                await self.browser_engine.click_element(submit_target_id, elements, delay=0.1)
                 self.status_cb("Completed", "Ujian disubmit otomatis.")
             else:
-                self.status_cb("Quiz Finished", "Mencapai soal akhir / submit. Dijeda.")
+                self.status_cb("Quiz Finished", f"Soal akhir #{cur_num or 'Final'} selesai ({duration}s). Dijeda untuk review.")
+
+            self.stop_loop()
             return False
 
+        # 5. ATURAN AUTO-ADVANCE & NAVIGASI
+        # Cek apakah platform Huawei beralih otomatis (hanya jika opsi single/true_false baru diklik)
+        auto_advanced = False
+        if action_performed and q_type in ("single_choice", "true_false"):
+            self.status_cb("Auto-Advance", f"Menunggu auto-advance Soal #{cur_num or '?'}...")
+            for _ in range(6):
+                await asyncio.sleep(0.05)
+                chk = await self.browser_engine.check_question_status(cur_num, pre_answer_hash)
+                if chk.get("changed"):
+                    auto_advanced = True
+                    logger.info(f"Platform auto-advanced: #{cur_num} -> #{chk.get('current')}.")
+                    break
+
+        if auto_advanced:
+            await asyncio.sleep(0.06)
+            if exec_mode == "auto_click_and_next":
+                self.status_cb("Idle", f"Soal #{cur_num or '?'} selesai via Auto-Advance ({duration}s).")
+                return True
+            else:
+                self.status_cb("Waiting Next", f"Jawaban dicentang ({duration}s).")
+                return False
+
+        # 6. Mode Read/Answer Only
         if exec_mode == "auto_click_answer_only":
-            duration = round(time.time() - t_start, 2)
-            self.status_cb("Waiting Next", f"Jawaban dicentang ({duration}s). Silakan klik Selanjutnya.")
+            self.status_cb("Waiting Next", f"Jawaban tervalidasi ({duration}s). Silakan klik Selanjutnya.")
             return False
 
+        # 7. Eksekusi Tombol Next jika platform tidak auto-advance (atau multi-choice / pre-checked)
         if exec_mode == "auto_click_and_next":
             if next_id is not None:
                 self.status_cb("Navigating...", f"Klik Next [{next_id}]...")
-                old_hash = await self.browser_engine.get_question_hash()
-
-                # Eksekusi klik tombol Next
-                clicked = await self.browser_engine.click_element(next_id, elements, delay=0.06)
+                clicked = await self.browser_engine.click_element(next_id, elements, delay=0.04)
                 if not clicked:
                     logger.warning(f"Gagal mengklik tombol Next [{next_id}].")
                     return False
 
-                # Anti-Skipping & SPA Verification: Polling cepat pergantian soal (maks 0.6s)
+                # Polling pergantian soal kilat (50ms interval)
                 changed = False
-                for _ in range(12):
+                for _ in range(35):
                     await asyncio.sleep(0.05)
-                    new_hash = await self.browser_engine.get_question_hash()
-                    if new_hash and new_hash != old_hash:
+                    chk = await self.browser_engine.check_question_status(cur_num, pre_answer_hash)
+                    if chk.get("changed"):
                         changed = True
                         break
 
                 if not changed:
-                    logger.warning("Deteksi soal belum berganti setelah klik Next. Menunggu 0.2s ekstra.")
-                    await asyncio.sleep(0.2)
+                    logger.warning(f"Soal #{cur_num or '?'} belum berganti setelah klik Next. Dijeda untuk mencegah skip.")
+                    return False
 
                 duration = round(time.time() - t_start, 2)
-                self.status_cb("Idle", f"Soal selesai dalam {duration}s.")
+                self.status_cb("Idle", f"Soal #{cur_num or '?'} selesai dalam {duration}s.")
                 return True
+            else:
+                logger.warning(f"Tombol Next tidak ditemukan untuk Soal #{cur_num or '?'}.")
+                return False
 
-        duration = round(time.time() - t_start, 2)
         self.status_cb("Idle", f"Selesai dalam {duration}s.")
         return True
 
@@ -325,11 +427,12 @@ class AgentWorker(threading.Thread):
                     logger.warning("3 kegagalan beruntun pada auto-loop. Menjeda loop untuk pencegahan skip.")
                     self.status_cb("Paused", "Auto-Loop dijeda demi keamanan (deteksi macet).")
                     break
-                await asyncio.sleep(0.8)
+                await asyncio.sleep(0.5)
             else:
                 consecutive_failures = 0
-                await asyncio.sleep(0.2)
                 step += 1
+                cfg_delay = float(self.config.get("action_delay", 0.3))
+                await asyncio.sleep(max(0.1, cfg_delay))
 
         self.is_running = False
         self.status_cb("Idle", "Auto-Loop selesai.")

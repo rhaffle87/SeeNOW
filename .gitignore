@@ -29,6 +29,7 @@ chrome_profile/
 logs/
 question_cache.json
 sessions/
+scratch/
 
 # OS-specific
 Thumbs.db

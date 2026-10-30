@@ -381,13 +381,13 @@ class VisionQuizApp(ctk.CTk):
         # Primary Vision Model
         ctk.CTkLabel(self.settings_frame, text="Primary Vision Model:", font=ctk.CTkFont(size=10, weight="bold"), text_color="#a1a1aa").pack(anchor="w", pady=(2, 1))
         self.entry_model = ctk.CTkEntry(self.settings_frame, height=28, corner_radius=4, font=ctk.CTkFont(size=11), fg_color="#18181b", border_color="#27272a")
-        self.entry_model.insert(0, self.config.get("primary_vision_model", "ag/gemini-3.8-flash-low"))
+        self.entry_model.insert(0, self.config.get("primary_vision_model", "ag/gemini-3.8-flash-high"))
         self.entry_model.pack(fill="x", pady=(0, 4))
 
         # Fallback Vision Model
         ctk.CTkLabel(self.settings_frame, text="Fallback Vision Model:", font=ctk.CTkFont(size=10, weight="bold"), text_color="#a1a1aa").pack(anchor="w", pady=(2, 1))
         self.entry_fallback = ctk.CTkEntry(self.settings_frame, height=28, corner_radius=4, font=ctk.CTkFont(size=11), fg_color="#18181b", border_color="#27272a")
-        self.entry_fallback.insert(0, self.config.get("fallback_vision_model", "ag/gemini-2.5-flash"))
+        self.entry_fallback.insert(0, self.config.get("fallback_vision_model", "ag/gemini-3.8-flash-low"))
         self.entry_fallback.pack(fill="x", pady=(0, 4))
 
         # Browser CDP Port / URL

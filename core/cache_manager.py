@@ -1,5 +1,6 @@
 # core/cache_manager.py
 import os
+import re
 import json
 import hashlib
 import logging
@@ -99,23 +100,55 @@ class QuestionCacheManager:
         cached_correct_texts = [normalize_text(t) for t in cached_entry.get("correct_option_texts", []) if t]
         matched_option_ids: List[int] = []
 
+        def is_option_candidate(el: Dict[str, Any]) -> bool:
+            t = normalize_text(el.get("text", ""))
+            # Abaikan navigasi
+            if any(w in t for w in ("next", "submit", "finish", "selanjutnya", "kirim", "start", "prev", "back")):
+                return False
+            tag = (el.get("tag") or "").lower()
+            role = (el.get("role") or "").lower()
+            return tag in ("input", "label") or role in ("radio", "checkbox", "option") or len(t) > 0
+
+        option_elements = [el for el in current_elements if is_option_candidate(el)]
+
         for cached_t in cached_correct_texts:
-            for el in current_elements:
+            best_match_id = None
+            for el in option_elements:
                 el_text = normalize_text(el.get("text", ""))
-                # Cocokkan teks opsi
-                if cached_t in el_text or el_text in cached_t:
-                    if el["id"] not in matched_option_ids:
-                        matched_option_ids.append(el["id"])
+                if not el_text:
+                    continue
+
+                # 1. Exact match
+                if el_text == cached_t:
+                    best_match_id = el["id"]
+                    break
+
+                # 2. Match awalan (strip A. B. C. D.)
+                clean_el_text = re.sub(r'^[a-z]\s*[\.\:\-\)]\s*', '', el_text).strip()
+                clean_cached = re.sub(r'^[a-z]\s*[\.\:\-\)]\s*', '', cached_t).strip()
+                if clean_el_text and clean_cached and (clean_el_text == clean_cached):
+                    best_match_id = el["id"]
+                    break
+
+                # 3. Substring match hanya untuk teks panjang (minimal 5 karakter)
+                if len(cached_t) >= 5 and len(el_text) >= 5:
+                    if cached_t in el_text or el_text in cached_t:
+                        best_match_id = el["id"]
                         break
 
-        # Cari tombol navigasi Next
+            if best_match_id is not None and best_match_id not in matched_option_ids:
+                matched_option_ids.append(best_match_id)
+
+        # Cari tombol navigasi Next (eksplisit forward button)
         next_button_id: Optional[int] = None
-        nav_keywords = ("next", "selanjutnya", "berikut", "lanjut", "finish", "selesai")
+        forward_keywords = ("next", "selanjutnya", "berikut", "lanjut", "finish", "submit", "kirim", "selesai")
+        backward_keywords = ("prev", "previous", "kembali", "sebelumnya", "back", "prv")
+
         for el in current_elements:
             el_text = normalize_text(el.get("text", ""))
-            tag = el.get("tag", "").lower()
-            role = el.get("role", "").lower()
-            if any(kw in el_text for kw in nav_keywords) or ((tag == "button" or role == "button") and "next" in el_text):
+            if any(bw in el_text for bw in backward_keywords):
+                continue
+            if any(kw in el_text for kw in forward_keywords):
                 next_button_id = el["id"]
                 break
 
