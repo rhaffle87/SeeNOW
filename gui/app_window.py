@@ -111,7 +111,7 @@ class VisionQuizApp(ctk.CTk):
         if os.path.isfile(icon_path):
             try:
                 from PIL import Image
-                self._hdr_logo_img = ctk.CTkImage(light_image=Image.open(icon_path), dark_image=Image.open(icon_path), size=(15, 15))
+                self._hdr_logo_img = ctk.CTkImage(light_image=Image.open(icon_path), dark_image=Image.open(icon_path), size=(18, 18))
                 lbl_logo = ctk.CTkLabel(
                     hdr_left,
                     text=" SeeNOW",

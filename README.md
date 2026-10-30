@@ -1,7 +1,7 @@
 # README.md
 <div align="center">
 
-<img src="assets/logo.png" alt="SeeNOW Logo" width="130" style="margin-bottom: 8px;" />
+<img src="assets/logo.png" alt="SeeNOW Logo" width="220" />
 
 # SeeNOW
 ### Smart Exam Engine & Navigated Optical Workflow
