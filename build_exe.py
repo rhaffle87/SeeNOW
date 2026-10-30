@@ -24,6 +24,7 @@ def build():
         "--hidden-import=mss",
         "--hidden-import=pyautogui",
         "--hidden-import=openai",
+        "--hidden-import=httpx",
         "--hidden-import=pydantic"
     ]
 
