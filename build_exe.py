@@ -13,6 +13,7 @@ def build():
     add_data = [
         f"--add-data={ctk_path}{sep}customtkinter/",
         f"--add-data=core/som_injector.js{sep}core/",
+        f"--add-data=assets{sep}assets/",
         f"--add-data=config.json.example{sep}."
     ]
 
@@ -28,6 +29,12 @@ def build():
         "--hidden-import=pydantic"
     ]
 
+    icon_flag = []
+    if os.path.isfile("assets/icon.ico"):
+        icon_flag = ["--icon=assets/icon.ico"]
+    elif os.path.isfile("assets/icon.png"):
+        icon_flag = ["--icon=assets/icon.png"]
+
     cmd = [
         sys.executable,
         "-m",
@@ -36,6 +43,7 @@ def build():
         "--onedir",
         "--windowed",
         "--name=SeeNOW",
+        *icon_flag,
         *add_data,
         *hidden_imports,
         "main.py"

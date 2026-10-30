@@ -59,10 +59,32 @@ class VisionQuizApp(ctk.CTk):
         self.worker.start()
 
         self._build_ui()
+        self._set_window_icon()
         self._setup_hotkeys()
         self._apply_always_on_top()
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _set_window_icon(self):
+        base_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        ico_path = os.path.join(base_dir, "assets", "icon.ico")
+        png_path = os.path.join(base_dir, "assets", "icon.png")
+
+        if sys.platform == "win32" and os.path.isfile(ico_path):
+            try:
+                self.iconbitmap(ico_path)
+            except Exception as e:
+                logger.debug(f"Could not set window icon via iconbitmap: {e}")
+
+        if os.path.isfile(png_path):
+            try:
+                from PIL import Image, ImageTk
+                icon_img = Image.open(png_path)
+                photo = ImageTk.PhotoImage(icon_img)
+                self.wm_iconphoto(True, photo)
+                self._window_icon_ref = photo
+            except Exception as e:
+                logger.debug(f"Could not set window icon via wm_iconphoto: {e}")
 
     def _build_ui(self):
         # Configure root grid weights
@@ -83,7 +105,25 @@ class VisionQuizApp(ctk.CTk):
         hdr_left = ctk.CTkFrame(self.header_frame, fg_color="transparent")
         hdr_left.pack(side="left", padx=(8, 4), pady=3)
 
-        lbl_logo = ctk.CTkLabel(hdr_left, text="SeeNOW", font=ctk.CTkFont(size=12, weight="bold"), text_color="#f4f4f5")
+        self._hdr_logo_img = None
+        base_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        icon_path = os.path.join(base_dir, "assets", "icon-32.png")
+        if os.path.isfile(icon_path):
+            try:
+                from PIL import Image
+                self._hdr_logo_img = ctk.CTkImage(light_image=Image.open(icon_path), dark_image=Image.open(icon_path), size=(15, 15))
+                lbl_logo = ctk.CTkLabel(
+                    hdr_left,
+                    text=" SeeNOW",
+                    image=self._hdr_logo_img,
+                    compound="left",
+                    font=ctk.CTkFont(size=12, weight="bold"),
+                    text_color="#f4f4f5"
+                )
+            except Exception:
+                lbl_logo = ctk.CTkLabel(hdr_left, text="SeeNOW", font=ctk.CTkFont(size=12, weight="bold"), text_color="#f4f4f5")
+        else:
+            lbl_logo = ctk.CTkLabel(hdr_left, text="SeeNOW", font=ctk.CTkFont(size=12, weight="bold"), text_color="#f4f4f5")
         lbl_logo.pack(side="left", padx=(0, 6))
 
         self.status_badge = StatusBadge(hdr_left)

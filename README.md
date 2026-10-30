@@ -1,7 +1,9 @@
 # README.md
 <div align="center">
 
-# 🚀 SeeNOW
+<img src="assets/logo.png" alt="SeeNOW Logo" width="130" style="margin-bottom: 8px;" />
+
+# SeeNOW
 ### Smart Exam Engine & Navigated Optical Workflow
 
 [![CI Multi-OS](https://github.com/rhaffle87/seenow/actions/workflows/ci.yml/badge.svg)](https://github.com/rhaffle87/seenow/actions/workflows/ci.yml)
@@ -46,6 +48,10 @@ seenow/
 │   │   ├── bug_report.md
 │   │   └── feature_request.md
 │   └── pull_request_template.md
+├── assets/
+│   ├── logo.png                 # Official high-resolution transparent logo
+│   ├── icon.png                 # 256x256 application icon
+│   └── icon.ico                 # Multi-resolution Windows executable icon
 ├── core/
 │   ├── __init__.py
 │   ├── agent_worker.py          # Background worker thread with anti-skip state transition checks
